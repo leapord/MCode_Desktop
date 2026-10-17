@@ -86,7 +86,11 @@ impl PermissionManager {
         }
         for r in &self.rules {
             if r.tool == tool && (r.pattern == "*" || args_summary.contains(&r.pattern)) {
-                return if r.allow { Verdict::Allow } else { Verdict::Deny };
+                return if r.allow {
+                    Verdict::Allow
+                } else {
+                    Verdict::Deny { reason: format!("规则拒绝: {}", r.pattern) }
+                };
             }
         }
         match self.mode {

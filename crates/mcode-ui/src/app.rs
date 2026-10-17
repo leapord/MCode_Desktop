@@ -2,14 +2,14 @@
 //! 侧栏（会话/占用）+ 顶栏（模型/路径/模式徽章）+ 消息流（工具卡/diff）+ Composer（/ 与 @ 补全、排队、打断）
 
 use gpui::{
-    actions, prelude::*, px, rgb, App, Context, Entity, FocusHandle, Focusable, Render,
-    SharedString, Window,
+    actions, div, prelude::*, px, rgb, App as GpuiApp, Context, Entity, FocusHandle, Focusable,
+    Render, Rgba, SharedString, Window,
 };
 use mcode_core::agent::completion::{Candidate, CompletionState, InputHistory, Trigger};
 use mcode_core::commands as cmd;
 use mcode_core::permission::{Mode, PermissionManager, Verdict};
 
-use crate::text_input::{self, InputEvent, TextInput};
+use crate::text_input::{InputEvent, TextInput};
 use crate::theme::*;
 
 actions!(app, [CycleMode, PaletteUp, PaletteDown, PaletteComplete, ClosePalette, NewChat, OpenSettings, Interrupt]);
@@ -237,14 +237,14 @@ impl App {
 }
 
 impl Focusable for App {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
+    fn focus_handle(&self, _: &GpuiApp) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 // ---------- 渲染 ----------
 
-fn badge(label: &str, color: Rgba) -> gpui::Div {
+fn badge(label: impl Into<SharedString>, color: Rgba) -> gpui::Div {
     div()
         .px_2()
         .py_0p5()
@@ -253,7 +253,7 @@ fn badge(label: &str, color: Rgba) -> gpui::Div {
         .text_color(color)
         .border_1()
         .border_color(color)
-        .child(label.to_string())
+        .child(label.into())
 }
 
 fn tool_icon(kind: &str) -> (&'static str, Rgba) {
@@ -276,7 +276,7 @@ impl Render for App {
                 .mb_3()
                 .child(
                     div()
-                        .rounded-lg()
+                        .rounded_lg()
                         .border_1()
                         .border_color(BORDER)
                         .bg(BG_PANEL)
@@ -605,6 +605,7 @@ impl Render for App {
                                     .when(palette_open, |d| {
                                         d.child(
                                             div()
+                                                .id("palette")
                                                 .rounded_lg()
                                                 .border_1()
                                                 .border_color(BORDER_STRONG)

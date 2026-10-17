@@ -24,6 +24,12 @@ pub struct Provider {
     pub models: Vec<ModelConfig>,
 }
 
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self { name: String::new(), multimodal: false }
+    }
+}
+
 impl Default for Provider {
     fn default() -> Self {
         Self {

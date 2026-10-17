@@ -64,7 +64,7 @@ pub struct ToolContext {
 
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
-    fn def(&self) -> &'static ToolDefinition;
+    fn def(&self) -> ToolDefinition;
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult>;
 }
 
@@ -89,7 +89,7 @@ impl ToolRegistry {
         self.tools.push(t);
     }
 
-    pub fn definitions(&self) -> Vec<&'static ToolDefinition> {
+    pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.iter().map(|t| t.def()).collect()
     }
 
@@ -97,8 +97,8 @@ impl ToolRegistry {
         self.tools.iter().map(|t| t.as_ref()).find(|t| t.def().name == name)
     }
 
-    pub fn names(&self) -> Vec<&'static str> {
-        self.tools.iter().map(|t| t.def().name).collect()
+    pub fn names(&self) -> Vec<String> {
+        self.tools.iter().map(|t| t.def().name.to_string()).collect()
     }
 }
 
@@ -124,6 +124,12 @@ mod tests {
     #[test]
     fn registry_has_six_builtins() {
         let r = ToolRegistry::with_builtins();
-        assert_eq!(r.names(), vec!["read_file", "write_file", "edit_file", "bash", "glob", "grep"]);
+        assert_eq!(
+            r.names(),
+            vec!["read_file", "write_file", "edit_file", "bash", "glob", "grep"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
     }
 }

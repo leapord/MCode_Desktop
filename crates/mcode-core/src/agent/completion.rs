@@ -79,7 +79,7 @@ impl CompletionState {
             Trigger::At => "@",
         };
         match input.rsplit_once(char::is_whitespace) {
-            Some((head, _)) => format!("{}{}{} ", head, prefix, candidate_name),
+            Some((head, _)) => format!("{head} {prefix}{candidate_name} "),
             None => format!("{}{} ", prefix, candidate_name),
         }
     }

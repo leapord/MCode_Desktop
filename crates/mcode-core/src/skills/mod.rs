@@ -1,6 +1,5 @@
 //! Skill 加载 — 渐进式披露（MCode.md 3.3）：仅 name+description 常驻上下文，命中后展开 body
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -9,7 +8,7 @@ pub struct SkillEntry {
     pub name: String,
     pub description: String,
     /// 来源：ecc-core（内置）/ user（~/.mcode）/ project（.mcode）
-    pub source: &'static str,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,13 +40,13 @@ fn parse_skill_md(text: &str) -> Option<(String, String, String)> {
 }
 
 /// 加载一个目录下的 skills（<dir>/<name>/SKILL.md）
-fn load_dir(dir: &Path, source: &'static str, out: &mut Vec<Skill>) {
+fn load_dir(dir: &Path, source: &str, out: &mut Vec<Skill>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let p = e.path().join("SKILL.md");
         if let Ok(text) = std::fs::read_to_string(&p) {
             if let Some((name, description, body)) = parse_skill_md(&text) {
-                out.push(Skill { entry: SkillEntry { name, description, source }, body });
+                out.push(Skill { entry: SkillEntry { name, description, source: source.to_string() }, body });
             }
         }
     }

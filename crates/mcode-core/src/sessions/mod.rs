@@ -103,7 +103,8 @@ impl SessionStore {
         writeln!(f, "{}", serde_json::to_string(&serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
             "desc": desc,
-        }))?)
+        }))?)?;
+        Ok(())
     }
 
     fn flush_meta(&self) -> Result<()> {

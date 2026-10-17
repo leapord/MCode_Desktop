@@ -6,10 +6,10 @@ mod text_input;
 
 use app::App;
 use gpui::{
-    actions, px, size, Application, Bounds, KeyBinding, TitlebarOptions, WindowBounds,
-    WindowOptions,
+    actions, prelude::*, px, size, Application, Bounds, KeyBinding, TitlebarOptions,
+    WindowBounds, WindowOptions,
 };
-use text_input as ti;
+use text_input::{self as ti, TextInput};
 
 actions!(desktop, [Quit]);
 
@@ -49,19 +49,17 @@ fn main() {
             ..Default::default()
         };
         cx.open_window(options, |_, cx| {
-            let input = cx
-                .new(|cx| TextInput {
-                    focus_handle: cx.focus_handle(),
-                    content: "".into(),
-                    placeholder: "向 MCode 发送消息…  （/ 指令 · @ 文件）".into(),
-                    selected_range: 0..0,
-                    selection_reversed: false,
-                    marked_range: None,
-                    last_layout: None,
-                    last_bounds: None,
-                    is_selecting: false,
-                })
-                .unwrap();
+            let input = cx.new(|cx| TextInput {
+                focus_handle: cx.focus_handle(),
+                content: "".into(),
+                placeholder: "向 MCode 发送消息…  （/ 指令 · @ 文件）".into(),
+                selected_range: 0..0,
+                selection_reversed: false,
+                marked_range: None,
+                last_layout: None,
+                last_bounds: None,
+                is_selecting: false,
+            });
             cx.new(|cx| App::new(cx, input))
         })
         .unwrap();

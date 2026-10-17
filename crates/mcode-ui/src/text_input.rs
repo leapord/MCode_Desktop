@@ -4,12 +4,13 @@
 use std::ops::Range;
 
 use gpui::{
-    actions, App, Bounds, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
-    KeyContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels,
+    actions, App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
-    div, fill, hsla, prelude::*, px, relative, rgb, size,
+    div, fill, hsla, point, prelude::*, px, relative, rgb, rgba, size,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 actions!(
     text_input,
@@ -40,16 +41,16 @@ pub enum InputEvent {
 impl EventEmitter<InputEvent> for TextInput {}
 
 
-struct TextInput {
-    focus_handle: FocusHandle,
-    content: SharedString,
-    placeholder: SharedString,
-    selected_range: Range<usize>,
-    selection_reversed: bool,
-    marked_range: Option<Range<usize>>,
-    last_layout: Option<ShapedLine>,
-    last_bounds: Option<Bounds<Pixels>>,
-    is_selecting: bool,
+pub struct TextInput {
+    pub focus_handle: FocusHandle,
+    pub content: SharedString,
+    pub placeholder: SharedString,
+    pub selected_range: Range<usize>,
+    pub selection_reversed: bool,
+    pub marked_range: Option<Range<usize>>,
+    pub last_layout: Option<ShapedLine>,
+    pub last_bounds: Option<Bounds<Pixels>>,
+    pub is_selecting: bool,
 }
 
 impl TextInput {

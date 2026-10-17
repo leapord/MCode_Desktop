@@ -24,8 +24,8 @@ pub struct ReadFile;
 
 #[async_trait::async_trait]
 impl Tool for ReadFile {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "read_file",
             description: "读取工作区内文件内容（大文件自动截断）",
             parameters: json!({
@@ -72,8 +72,8 @@ pub struct WriteFile;
 
 #[async_trait::async_trait]
 impl Tool for WriteFile {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "write_file",
             description: "写入（或创建）工作区内文件",
             parameters: json!({
@@ -113,8 +113,8 @@ pub struct EditFile;
 
 #[async_trait::async_trait]
 impl Tool for EditFile {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "edit_file",
             description: "精确替换工作区内文件内容片段（old_string 唯一匹配）",
             parameters: json!({
@@ -160,8 +160,8 @@ pub struct Bash;
 
 #[async_trait::async_trait]
 impl Tool for Bash {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "bash",
             description: "在工作目录执行 shell 命令（受权限门控，可被取消）",
             parameters: json!({
@@ -228,8 +228,8 @@ pub struct Glob;
 
 #[async_trait::async_trait]
 impl Tool for Glob {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "glob",
             description: "按 glob 模式列出工作区文件",
             parameters: json!({
@@ -288,8 +288,8 @@ pub struct Grep;
 
 #[async_trait::async_trait]
 impl Tool for Grep {
-    fn def(&self) -> &'static ToolDefinition {
-        &ToolDefinition {
+    fn def(&self) -> ToolDefinition {
+        ToolDefinition {
             name: "grep",
             description: "正则搜索工作区文件内容（返回 文件:行号: 内容）",
             parameters: json!({

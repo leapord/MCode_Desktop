@@ -10,4 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 gpui = { workspace = true }
+unicode-segmentation = { workspace = true }
 mcode-core = { path = "../mcode-core" }
