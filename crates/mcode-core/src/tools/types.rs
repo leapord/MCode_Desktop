@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
-    pub name: &'static str,
-    pub description: &'static str,
+    /// 内置工具为静态名，MCP 工具为运行时名（mcp__<server>__<tool>）
+    pub name: String,
+    pub description: String,
     pub parameters: serde_json::Value,
     pub is_read_only: bool,
 }

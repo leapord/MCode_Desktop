@@ -1,12 +1,18 @@
-//! Agent harness — compact-harness 模式（对齐 MCode.md 1.2/4.3）：
+//! Agent harness — compact-harness 模式（对齐 MCode.md 1.2/4.3 与 CLI agent/loop.ts）：
 //! context（系统提示词组装）/ history（消息管理）/ compaction（阈值压缩）/ 主循环编排。
+//!
+//! 分层：`ModelBackend`（api 层实现，单轮流式）→ `agent::loop`（编排：重试/权限/工具/回喂）。
 
 pub mod completion;
+pub mod context;
+pub mod history;
+pub mod runner;
+pub mod subagent;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-// ---------- 消息模型 ----------
+// ---------- 消息模型（UI 渲染 + 会话持久化用，富结构） ----------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,96 +76,81 @@ pub fn text_of(m: &Message) -> String {
         .join("\n")
 }
 
-// ---------- harness ----------
+// ---------- 模型后端抽象（单轮流式，对齐 CLI api/client.ts streamResponse） ----------
 
-/// 上下文预算（自动 compact 阈值）
-pub const CONTEXT_LIMIT_TOKENS: usize = 160_000;
-pub const AUTO_COMPACT_THRESHOLD: f64 = 0.62;
-
+/// 传给后端的纯文本消息（history 只存 user/assistant 文本对，对齐 CLI ChatMessage）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnResult {
+pub struct ApiMessage {
+    pub role: crate::agent::Role,
+    pub text: String,
+}
+
+/// 图片附件（multimodal 模型的 input_image part）
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    pub path: String,
+    pub data_url: String,
+}
+
+/// 模型产出的工具调用（response.output_item.done → function_call）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// 单轮流式回合的结果：回复文本 + 工具调用集合 + 用量
+#[derive(Debug, Clone, Default)]
+pub struct StreamTurn {
     pub reply: String,
-    pub tool_calls: usize,
+    pub tool_calls: Vec<ToolCall>,
+    pub usage: Option<crate::util::TokenUsage>,
     pub interrupted: bool,
+}
+
+/// 后端流事件（loop 负责聚合成 AgentEvent）
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Reasoning(String),
+    TextDelta(String),
 }
 
 /// 模型回调抽象：api 层实现它，loop 只做编排（可测试）
 #[async_trait::async_trait]
 pub trait ModelBackend: Send + Sync {
-    /// 一轮完整 agent 循环：流式产出文本与工具调用事件
-    async fn run_turn(
+    /// 单轮流式调用：产出文本/思考增量，返回完整回复与工具调用。
+    /// 无请求级超时（对齐 CLI：只有用户打断能终止长生成）。
+    async fn stream_turn(
         &self,
         system: &str,
-        history: &[Message],
+        history: &[ApiMessage],
+        user_input: &str,
+        attachments: &[Attachment],
         tools: &[crate::tools::ToolDefinition],
-        on_event: &mut (dyn FnMut(TurnEvent) + Send),
+        on_event: &mut (dyn FnMut(StreamEvent) + Send),
         cancel: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<TurnResult>;
+    ) -> Result<StreamTurn>;
 }
+
+// ---------- 上下文预算（自动 compact 阈值，对齐 CLI constants） ----------
+
+pub const COMPACT_THRESHOLD_TOKENS: usize = 100_000;
+pub const CHARS_PER_TOKEN: usize = 4;
+/// UI 上下文预算展示上限
+pub const CONTEXT_LIMIT_TOKENS: usize = 160_000;
 
 #[derive(Debug, Clone)]
-pub enum TurnEvent {
-    Thinking(String),
+pub enum AgentEvent {
+    Reasoning { text: String, scope: Option<String> },
     TextDelta(String),
-    ToolCallStart { id: String, name: String, input: serde_json::Value },
-    ToolCallEnd { id: String, output: String, success: bool },
+    Retrying { attempt: usize, max: usize, reason: String },
+    ToolStart { name: String, args: serde_json::Value, scope: Option<String> },
+    ToolResult { name: String, success: bool, output: String, display: Option<crate::tools::DisplayBlock>, scope: Option<String> },
     Usage(crate::util::TokenUsage),
-}
-
-/// 系统提示词组装（对齐 harness/context.ts）：身份 + 工具说明 + skill 索引 + 环境信息 + 语言指令
-pub fn build_system_prompt(cfg: &crate::config::Config, skills: &[crate::skills::SkillEntry], cwd: &str) -> String {
-    let lang = match cfg.language {
-        crate::config::Language::ZhCn => "Always respond in Simplified Chinese.",
-        crate::config::Language::ZhTw => "Always respond in Traditional Chinese.",
-        crate::config::Language::EnUs => "Always respond in English.",
-        crate::config::Language::JaJp => "Always respond in Japanese.",
-        crate::config::Language::KoKr => "Always respond in Korean.",
-    };
-    let skill_index: String = skills
-        .iter()
-        .map(|s| format!("- {}: {}", s.name, s.description))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "你是 MCode，一个桌面端 AI 编程智能体。\n{lang}\n当前工作目录: {cwd}\n\n可用技能索引（渐进式披露，仅 name+description 常驻）:\n{skill_index}"
-    )
-}
-
-/// 上下文占用估算（4 chars ≈ 1 token 的粗估，UI 展示用）
-pub fn estimate_tokens(history: &[Message], system: &str) -> usize {
-    let chars: usize = history.iter().map(|m| text_of(m).len()).sum();
-    chars / 4 + system.len() / 4
-}
-
-/// 是否需要自动 compact
-pub fn needs_compaction(history: &[Message], system: &str) -> bool {
-    let t = estimate_tokens(history, system);
-    t as f64 > CONTEXT_LIMIT_TOKENS as f64 * AUTO_COMPACT_THRESHOLD
-}
-
-/// 压缩：保留最近 keep 轮，早期消息摘要化（对齐 harness/compaction.ts 语义）
-pub fn compact(history: Vec<Message>, keep: usize) -> (Message, Vec<Message>) {
-    if history.len() <= keep {
-        return (Message::text(Role::User, "[无早期历史]"), history);
-    }
-    let (early, recent) = history.split_at(history.len() - keep);
-    let summary: String = early
-        .iter()
-        .map(|m| format!("[{:?}] {}", m.role, text_of(m)))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let summary_msg = Message::text(
-        Role::User,
-        format!("[早期历史摘要 — /compact 生成]\n{}", truncate(&summary, 4000)),
-    );
-    (summary_msg, recent.to_vec())
-}
-
-fn truncate(s: &str, max: usize) -> &str {
-    match s.char_indices().nth(max) {
-        Some((i, _)) => &s[..i],
-        None => s,
-    }
+    Compacted { note: String },
+    Done { reply: String },
+    Error { message: String },
 }
 
 #[cfg(test)]
@@ -173,14 +164,5 @@ mod tests {
 
         let without = Message::user_with_images("看图", vec![("a.png".into(), "data:...".into())], false);
         assert!(text_of(&without).contains("图片已忽略"));
-    }
-
-    #[test]
-    fn compaction_keeps_recent() {
-        let history: Vec<Message> = (0..10).map(|i| Message::text(Role::User, format!("m{i}"))).collect();
-        let (summary, recent) = compact(history, 4);
-        assert_eq!(recent.len(), 4);
-        assert!(crate::agent::text_of(&summary).contains("m0"));
-        assert!(!crate::agent::text_of(&recent[0]).contains("m0"));
     }
 }

@@ -1,12 +1,10 @@
-//! 内置工具首批 — 对齐 MCode.md 3.1：read_file / write_file / edit_file / bash / glob / grep
+//! 内置工具 — 对齐 MCode.md 3.1：read_file / write_file / edit_file / bash / glob / grep
 
 use super::{
-    contain_to_workspace, unified_diff, Tool, ToolContext, ToolDefinition, ToolResult,
+    clamp_output, contain_to_workspace, unified_diff, Tool, ToolContext, ToolDefinition, ToolResult,
 };
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
-use std::path::PathBuf;
-use walkdir::WalkDir;
 
 const MAX_FILE_BYTES: u64 = 512 * 1024; // 大文件截断保护
 
@@ -15,7 +13,27 @@ fn str_arg(input: &Value, key: &str) -> Result<String> {
 }
 
 fn file_ref(path: &str, lines: String) -> ToolResult {
-    ToolResult { success: true, output: lines.clone(), display: Some(super::DisplayBlock::FileRef { path: path.into(), lines }) }
+    ToolResult {
+        success: true,
+        output: clamp_output(lines.clone()),
+        display: Some(super::DisplayBlock::FileRef { path: path.into(), lines }),
+    }
+}
+
+fn opt_u64(input: &Value, key: &str) -> Option<u64> {
+    input.get(key).and_then(|v| v.as_u64())
+}
+
+/// 内置工具全集（注册顺序对齐 CLI registry.ts）
+pub fn all_builtins() -> Vec<std::sync::Arc<dyn Tool>> {
+    vec![
+        std::sync::Arc::new(ReadFile),
+        std::sync::Arc::new(WriteFile),
+        std::sync::Arc::new(EditFile),
+        std::sync::Arc::new(Bash),
+        std::sync::Arc::new(Glob),
+        std::sync::Arc::new(Grep),
+    ]
 }
 
 // ---------- read_file ----------
@@ -26,8 +44,8 @@ pub struct ReadFile;
 impl Tool for ReadFile {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "read_file",
-            description: "读取工作区内文件内容（大文件自动截断）",
+            name: "read_file".into(),
+            description: "读取工作区内文件内容（大文件自动截断）".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -43,27 +61,34 @@ impl Tool for ReadFile {
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let rel = str_arg(&input, "path")?;
+        if is_image_path(&rel) {
+            bail!("图片文件无法作为文本读取；请让用户用 @{} 方式附上该图片", rel);
+        }
         let path = contain_to_workspace(&ctx.cwd, &rel)?;
         let bytes = std::fs::read(&path)?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
             bail!("文件过大（>512KB），请指定 offset/limit 分段读取");
         }
         let text = String::from_utf8_lossy(&bytes);
-        let start = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        let limit = input.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let selected: Vec<&str> = text
+        let start = opt_u64(&input, "offset").unwrap_or(0) as usize;
+        let limit = opt_u64(&input, "limit").map(|v| v as usize);
+        let numbered: String = text
             .lines()
             .skip(start)
             .take(limit.unwrap_or(2000))
-            .collect();
-        let numbered: String = selected
-            .iter()
             .enumerate()
             .map(|(i, l)| format!("{:>5} | {}", start + i + 1, l))
             .collect::<Vec<_>>()
             .join("\n");
         Ok(file_ref(&rel, numbered))
     }
+}
+
+fn is_image_path(p: &str) -> bool {
+    matches!(
+        p.rsplit('.').next().unwrap_or_default(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    )
 }
 
 // ---------- write_file ----------
@@ -74,8 +99,8 @@ pub struct WriteFile;
 impl Tool for WriteFile {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "write_file",
-            description: "写入（或创建）工作区内文件",
+            name: "write_file".into(),
+            description: "写入（或创建）工作区内文件".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -98,12 +123,11 @@ impl Tool for WriteFile {
         }
         std::fs::write(&path, &content)?;
         let lines = unified_diff(&old, &content, &rel);
-        let out = ToolResult {
+        Ok(ToolResult {
             success: true,
             output: format!("已写入 {rel}（{} 字节）", content.len()),
             display: Some(super::DisplayBlock::Diff { path: rel.clone(), lines }),
-        };
-        Ok(out)
+        })
     }
 }
 
@@ -115,8 +139,8 @@ pub struct EditFile;
 impl Tool for EditFile {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "edit_file",
-            description: "精确替换工作区内文件内容片段（old_string 唯一匹配）",
+            name: "edit_file".into(),
+            description: "精确替换工作区内文件内容片段（old_string 唯一匹配）".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -162,8 +186,8 @@ pub struct Bash;
 impl Tool for Bash {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "bash",
-            description: "在工作目录执行 shell 命令（受权限门控，可被取消）",
+            name: "bash".into(),
+            description: "在工作目录执行 shell 命令（受权限门控，可被取消）".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -179,7 +203,7 @@ impl Tool for Bash {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let command = str_arg(&input, "command")?;
         let timeout = std::time::Duration::from_millis(
-            input.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(120_000),
+            opt_u64(&input, "timeout_ms").unwrap_or(120_000),
         );
         let mut child = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
             .args(if cfg!(windows) { ["/C", &command] } else { ["-c", &command] })
@@ -188,36 +212,68 @@ impl Tool for Bash {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
-        let mut cancel = ctx.cancel.clone();
-        let stdout_task = child.stdout.take().unwrap();
-        let stderr_task = child.stderr.take().unwrap();
-        let out_fut = async {
+        let mut stdout_pipe = child.stdout.take().unwrap();
+        let mut stderr_pipe = child.stderr.take().unwrap();
+        // 管道并发排空（避免缓冲区满导致死锁）
+        let out_task = tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let (mut a, mut b) = (stdout_task, stderr_task);
-            let _ = tokio::select! {
-                r = a.read_to_end(&mut stdout) => r,
-                _ = cancel.changed() => { let _ = child.kill().await; Ok(0usize) }
-            };
-            let _ = b.read_to_end(&mut stderr).await;
-            (stdout, stderr)
-        };
-        let (stdout, stderr) = match tokio::time::timeout(timeout, out_fut).await {
-            Ok(pair) => pair,
-            Err(_) => bail!("命令超时（{}ms）", timeout.as_millis()),
-        };
-        let stdout = String::from_utf8_lossy(&stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&stderr).into_owned();
-        let (success, code) = if stdout.is_empty() && stderr.is_empty() {
-            (true, 0)
+            let mut v = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut v).await;
+            v
+        });
+        let err_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut v = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut v).await;
+            v
+        });
+        // 子进程归属独立任务：超时/取消 → kill + 回收，真实 exit code
+        let mut cancel = ctx.cancel.clone();
+        let wait_task = tokio::spawn(async move {
+            tokio::select! {
+                st = child.wait() => (st.ok().and_then(|s| s.code()), false, false),
+                _ = cancel.changed() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, false, true)
+                }
+                _ = tokio::time::sleep(timeout) => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, true, false)
+                }
+            }
+        });
+        let (code, timed_out, cancelled) = wait_task.await.unwrap_or((None, false, false));
+        let stdout = String::from_utf8_lossy(&out_task.await.unwrap_or_default()).into_owned();
+        let stderr = String::from_utf8_lossy(&err_task.await.unwrap_or_default()).into_owned();
+
+        let (success, suffix) = if cancelled {
+            (false, "[cancelled]".to_string())
+        } else if timed_out {
+            (false, format!("[timeout: {}ms]", timeout.as_millis()))
         } else {
-            (true, 0)
+            match code {
+                Some(0) => (true, String::new()),
+                Some(n) => (false, format!("[exit {n}]")),
+                None => (false, "[exit: unknown]".to_string()),
+            }
         };
+        let mut output = format!("{stdout}{stderr}");
+        if !suffix.is_empty() {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&suffix);
+        }
         Ok(ToolResult {
             success,
-            output: format!("{stdout}\n{stderr}"),
-            display: Some(super::DisplayBlock::Output { stdout, stderr, code }),
+            output: clamp_output(output),
+            display: Some(super::DisplayBlock::Output {
+                stdout,
+                stderr,
+                code: code.unwrap_or(if timed_out { 124 } else { -1 }),
+            }),
         })
     }
 }
@@ -230,8 +286,8 @@ pub struct Glob;
 impl Tool for Glob {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "glob",
-            description: "按 glob 模式列出工作区文件",
+            name: "glob".into(),
+            description: "按 glob 模式列出工作区文件".into(),
             parameters: json!({
                 "type": "object",
                 "properties": { "pattern": { "type": "string", "example": "src/**/*.ts" } },
@@ -243,8 +299,8 @@ impl Tool for Glob {
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let pattern = str_arg(&input, "pattern")?;
-        let matcher = globset_matcher(&pattern)?;
-        let mut hits: Vec<String> = WalkDir::new(&ctx.cwd)
+        let matcher = glob_matcher(&pattern)?;
+        let mut hits: Vec<String> = walkdir::WalkDir::new(&ctx.cwd)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -260,26 +316,13 @@ impl Tool for Glob {
     }
 }
 
-/// 轻量 glob：`**` 跨目录、`*` 单层、`?` 单字符、`{a,b}` 不支持（对齐 CLI 常用面）
-fn globset_matcher(pattern: &str) -> Result<Box<dyn Fn(&str) -> bool + Send>> {
-    let mut re = String::from("^");
-    for c in pattern.chars() {
-        match c {
-            '*' => re.push_str("[^/]*"),
-            '?' => re.push_str("[^/]"),
-            '.' => re.push_str("\\."),
-            '{' | '}' => re.push_str(&c.to_string()),
-            c => re.push_str(&regex::escape(&c.to_string())),
-        }
-    }
-    // `**` 递归：先把上面产出的 `[^/]*[^/]*` 合并语义修正
-    let re = if pattern.contains("**") {
-        re.replace("[^/]*[^/]*", ".*")
-    } else {
-        re
-    };
-    let re = regex::Regex::new(&format!("{re}$"))?;
-    Ok(Box::new(move |s: &str| re.is_match(s)))
+/// glob 匹配（globset crate：`*` 不跨 `/`，`**` 跨目录，`?` 单字符，`{a,b}` 支持）
+pub fn glob_matcher(pattern: &str) -> Result<impl Fn(&str) -> bool + Send + Sync> {
+    let glob = globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()?;
+    let matcher = glob.compile_matcher();
+    Ok(move |s: &str| matcher.is_match(s))
 }
 
 // ---------- grep ----------
@@ -290,8 +333,8 @@ pub struct Grep;
 impl Tool for Grep {
     fn def(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "grep",
-            description: "正则搜索工作区文件内容（返回 文件:行号: 内容）",
+            name: "grep".into(),
+            description: "正则搜索工作区文件内容（返回 文件:行号: 内容）".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -307,13 +350,12 @@ impl Tool for Grep {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let pattern = str_arg(&input, "pattern")?;
         let re = regex::Regex::new(&pattern)?;
-        let include = input.get("include").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let inc_matcher = match &include {
-            Some(p) => Some(globset_matcher(p)?),
+        let inc_matcher = match input.get("include").and_then(|v| v.as_str()) {
+            Some(p) => Some(glob_matcher(p)?),
             None => None,
         };
         let mut hits: Vec<String> = Vec::new();
-        for entry in WalkDir::new(&ctx.cwd)
+        for entry in walkdir::WalkDir::new(&ctx.cwd)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -349,5 +391,59 @@ impl Tool for Grep {
     }
 }
 
-#[allow(unused)]
-fn _unused(_: PathBuf) {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::{noop_sink, ToolRegistry};
+
+    fn test_ctx() -> (ToolContext, tokio::sync::watch::Sender<bool>) {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        (
+            ToolContext {
+                cwd: std::env::temp_dir().join("mcode-builtin-test"),
+                cancel: rx,
+                deps: None,
+                emit: noop_sink(),
+            },
+            tx,
+        )
+    }
+
+    #[tokio::test]
+    async fn bash_reports_real_exit_code() {
+        let (ctx, _tx) = test_ctx();
+        std::fs::create_dir_all(&ctx.cwd).unwrap();
+        let r = Bash.execute(json!({"command": "exit 3"}), &ctx).await.unwrap();
+        assert!(!r.success);
+        assert!(r.output.contains("[exit 3]"));
+    }
+
+    #[tokio::test]
+    async fn bash_captures_stdout() {
+        let (ctx, _tx) = test_ctx();
+        std::fs::create_dir_all(&ctx.cwd).unwrap();
+        let r = Bash.execute(json!({"command": "echo hello"}), &ctx).await.unwrap();
+        assert!(r.success);
+        assert_eq!(r.output.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn glob_matches_recursive() {
+        let (ctx, _tx) = test_ctx();
+        let dir = ctx.cwd.join("a/b");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("x.ts"), "1").unwrap();
+        std::fs::write(ctx.cwd.join("root.ts"), "1").unwrap();
+        let m = glob_matcher("**/*.ts").unwrap();
+        assert!(m("a/b/x.ts"));
+        assert!(m("root.ts"));
+        let m2 = glob_matcher("*.ts").unwrap();
+        assert!(!m2("a/b/x.ts"), "单层 * 不应跨目录");
+    }
+
+    #[test]
+    fn registry_builtins() {
+        let r = ToolRegistry::with_builtins();
+        assert_eq!(r.names().len(), 6);
+    }
+}

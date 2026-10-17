@@ -1,23 +1,26 @@
-//! OpenAI Responses API 客户端 — 唯一协议（对齐 MCode.md 1.5），SSE 流式。
-//! 实现 `agent::ModelBackend`，供主循环调度。
+//! OpenAI Responses API 客户端 — 唯一协议（对齐 MCode.md 1.5 与 CLI api/client.ts），SSE 流式。
+//! 实现 `agent::ModelBackend`。无请求级超时（只有用户打断能终止长生成）。
 
 use anyhow::Result;
 use futures::StreamExt;
 use serde_json::{json, Value};
 
-use crate::agent::{Message, ModelBackend, TurnEvent, TurnResult};
+use crate::agent::{
+    ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall,
+};
 use crate::config::Provider;
 
 pub struct ResponsesBackend {
-    pub provider: Provider,
-    pub model: String,
+    provider: Provider,
+    model: String,
     client: reqwest::Client,
 }
 
 impl ResponsesBackend {
     pub fn new(provider: Provider, model: String) -> Result<Self> {
-        let key = std::env::var(&provider.api_key_env)
-            .map_err(|_| anyhow::anyhow!("环境变量 {} 未设置（apiKey 只存环境变量名）", provider.api_key_env))?;
+        let key = provider
+            .resolve_api_key()
+            .ok_or_else(|| anyhow::anyhow!("API key 不可用：环境变量 {} 未设置且值不是明文 key", provider.api_key_env))?;
         let client = reqwest::Client::builder()
             .default_headers({
                 let mut h = reqwest::header::HeaderMap::new();
@@ -35,38 +38,32 @@ impl ResponsesBackend {
 
 #[async_trait::async_trait]
 impl ModelBackend for ResponsesBackend {
-    async fn run_turn(
+    async fn stream_turn(
         &self,
         system: &str,
-        history: &[Message],
+        history: &[ApiMessage],
+        user_input: &str,
+        attachments: &[Attachment],
         tools: &[crate::tools::ToolDefinition],
-        on_event: &mut (dyn FnMut(TurnEvent) + Send),
+        on_event: &mut (dyn FnMut(StreamEvent) + Send),
         cancel: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<TurnResult> {
-        // 组装 Responses 请求体：input 为消息数组，tools 为扁平 function 定义
-        let input: Vec<Value> = history
+    ) -> Result<StreamTurn> {
+        // input = 历史（user→input_text / assistant→output_text）+ 当前输入（可带图片附件）
+        let mut input: Vec<Value> = history
             .iter()
             .map(|m| {
-                let role = match m.role {
-                    crate::agent::Role::User | crate::agent::Role::Tool => "user",
-                    crate::agent::Role::Assistant => "assistant",
+                let (t, text) = match m.role {
+                    crate::agent::Role::User => ("input_text", &m.text),
+                    _ => ("output_text", &m.text),
                 };
-                let content: Vec<Value> = m
-                    .content
-                    .iter()
-                    .map(|c| match c {
-                        crate::agent::ContentBlock::Text { text } => {
-                            json!({ "type": "input_text", "text": text })
-                        }
-                        crate::agent::ContentBlock::Image { data, .. } => {
-                            json!({ "type": "input_image", "image_url": data })
-                        }
-                        _ => json!({ "type": "input_text", "text": "[tool block]" }),
-                    })
-                    .collect();
-                json!({ "role": role, "content": content })
+                json!({ "role": role_str(m.role), "content": [{ "type": t, "text": text }] })
             })
             .collect();
+        let mut user_content = vec![json!({ "type": "input_text", "text": user_input })];
+        for a in attachments {
+            user_content.push(json!({ "type": "input_image", "image_url": a.data_url }));
+        }
+        input.push(json!({ "role": "user", "content": user_content }));
 
         let tools_json: Vec<Value> = tools
             .iter()
@@ -92,62 +89,90 @@ impl ModelBackend for ResponsesBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Responses API {status}: {}", truncate(&text, 500));
+            anyhow::bail!("API {status}: {}", truncate(&text, 500));
         }
 
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        let mut reply = String::new();
-        let mut tool_calls: usize = 0;
-        let mut usage = crate::util::TokenUsage::default();
+        let mut turn = StreamTurn::default();
 
         while let Some(chunk) = stream.next().await {
             if *cancel.borrow() {
-                return Ok(TurnResult { reply, tool_calls, interrupted: true });
+                turn.interrupted = true;
+                return Ok(turn);
             }
             let chunk = chunk?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
-            // SSE：按空行分帧，data: 前缀取 payload
-            while let Some(pos) = buf.find("\n\n") {
-                let frame: String = buf.drain(..pos + 2).collect();
-                for line in frame.lines() {
-                    let Some(data) = line.strip_prefix("data: ") else { continue };
-                    let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
-                    match v["type"].as_str() {
-                        Some("response.output_text.delta") => {
-                            if let Some(d) = v["delta"].as_str() {
-                                reply.push_str(d);
-                                on_event(TurnEvent::TextDelta(d.to_string()));
+            // SSE 按行取 data: 载荷（对齐 CLI parseSSE）
+            while let Some(pos) = buf.find('\n') {
+                let line: String = buf.drain(..=pos).collect();
+                let line = line.trim_end();
+                let Some(data) = line.strip_prefix("data:") else { continue };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+                match v["type"].as_str() {
+                    Some("response.output_text.delta") => {
+                        if let Some(d) = v["delta"].as_str() {
+                            if !d.is_empty() {
+                                turn.reply.push_str(d);
+                                on_event(StreamEvent::TextDelta(d.to_string()));
                             }
                         }
-                        Some("response.function_call_arguments.done") => {
-                            tool_calls += 1;
-                            on_event(TurnEvent::ToolCallStart {
-                                id: v["item_id"].as_str().unwrap_or("").into(),
-                                name: v["name"].as_str().unwrap_or("").into(),
-                                input: serde_json::from_str(v["arguments"].as_str().unwrap_or("{}")).unwrap_or(json!({})),
+                    }
+                    Some("response.reasoning_summary_text.delta") | Some("response.reasoning_text.delta") => {
+                        if let Some(d) = v["delta"].as_str() {
+                            if !d.is_empty() {
+                                on_event(StreamEvent::Reasoning(d.to_string()));
+                            }
+                        }
+                    }
+                    Some("response.output_item.done") => {
+                        let item = &v["item"];
+                        if item["type"] == "function_call" {
+                            turn.tool_calls.push(ToolCall {
+                                call_id: item["call_id"].as_str().unwrap_or("").into(),
+                                name: item["name"].as_str().unwrap_or("").into(),
+                                arguments: item["arguments"].as_str().unwrap_or("{}").into(),
                             });
                         }
-                        Some("response.completed") => {
-                            if let Some(u) = v["response"]["usage"].as_object() {
-                                usage.input = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                                usage.output = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                                on_event(TurnEvent::Usage(usage.clone()));
-                            }
-                        }
-                        _ => {}
                     }
+                    Some("response.completed") => {
+                        if let Some(u) = v["response"]["usage"].as_object() {
+                            let usage = crate::util::TokenUsage {
+                                input: u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
+                                output: u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
+                                cache_read: u
+                                    .get("input_tokens_details")
+                                    .and_then(|d| d.get("cached_tokens"))
+                                    .and_then(|x| x.as_u64())
+                                    .unwrap_or(0),
+                                cache_write: 0,
+                            };
+                            turn.usage = Some(usage);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
-        Ok(TurnResult { reply, tool_calls, interrupted: false })
+        Ok(turn)
     }
 }
 
-fn truncate(s: &str, max: usize) -> &str {
+fn role_str(r: crate::agent::Role) -> &'static str {
+    match r {
+        crate::agent::Role::User | crate::agent::Role::Tool => "user",
+        crate::agent::Role::Assistant => "assistant",
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
-        Some((i, _)) => &s[..i],
-        None => s,
+        Some((i, _)) => s[..i].to_string(),
+        None => s.to_string(),
     }
 }

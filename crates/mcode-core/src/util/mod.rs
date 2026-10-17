@@ -13,6 +13,24 @@ pub fn config_path() -> PathBuf {
     mcode_dir().join("config.json")
 }
 
+/// 桌面扩展配置（权限规则 / MCP / hooks）— CLI 不读取，避免污染互操作面
+pub fn desktop_config_path() -> PathBuf {
+    mcode_dir().join("desktop.json")
+}
+
+/// 项目级 MCODE.md 记忆文档搜索 + 全局，均存在时拼接
+pub fn mcode_md_paths(cwd: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    // 最近优先：cwd → 根（对齐 CLI mdoc.ts 的 nearest-first walk）
+    let mut cur = Some(cwd.to_path_buf());
+    while let Some(d) = cur {
+        out.push(d.join("MCODE.md"));
+        cur = d.parent().map(|p| p.to_path_buf());
+    }
+    out.push(mcode_dir().join("MCODE.md"));
+    out
+}
+
 pub fn sessions_dir(cwd: &std::path::Path) -> PathBuf {
     let hash = format!("{:x}", md5_of(cwd.to_string_lossy().as_bytes()));
     mcode_dir().join("projects").join(hash).join("sessions")

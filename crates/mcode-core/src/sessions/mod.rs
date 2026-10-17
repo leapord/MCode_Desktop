@@ -87,6 +87,25 @@ impl SessionStore {
         self.flush_meta()
     }
 
+    /// 恢复历史会话：读 JSONL 消息流（resume 数据源）
+    pub fn load(cwd: &std::path::Path, id: &str) -> Result<(Self, Vec<Message>)> {
+        let dir = crate::util::sessions_dir(cwd);
+        let jsonl_path = dir.join(format!("{id}.jsonl"));
+        let meta_path = dir.join(format!("{id}.meta.json"));
+        let meta: SessionMeta = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
+        let mut messages = vec![];
+        for line in std::fs::read_to_string(&jsonl_path)?.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(m) = serde_json::from_str::<Message>(line) {
+                messages.push(m);
+            }
+        }
+        let s = Self { meta, jsonl_path, meta_path };
+        Ok((s, messages))
+    }
+
     /// 会话标题取首轮用户输入截断（对齐 CLI）
     pub fn ensure_title(&mut self, first_user_text: &str) {
         if self.meta.title == "未命名会话" && !first_user_text.is_empty() {

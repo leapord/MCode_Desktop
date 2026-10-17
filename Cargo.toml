@@ -19,6 +19,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 similar = "2"          # diff 算法（edit_file 卡片渲染源）
+globset = "0.4"        # glob 匹配（glob/grep include 工具）
 futures = "0.3"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
