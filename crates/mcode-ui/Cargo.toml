@@ -1,0 +1,13 @@
+[package]
+name = "mcode-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "MCode_Desktop"
+path = "src/main.rs"
+
+[dependencies]
+gpui = { workspace = true }
+mcode-core = { path = "../mcode-core" }

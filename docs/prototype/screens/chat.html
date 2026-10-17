@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode Desktop · 主对话</title>
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  /* ---------- 消息流 ---------- */
+  .messages { flex: 1; overflow-y: auto; padding: 20px 24px 12px; min-height: 0; }
+  .msg { margin-bottom: 20px; max-width: 860px; }
+  .msg .role {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text-2);
+  }
+  .msg .role .avatar {
+    width: 20px; height: 20px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #fff;
+  }
+  .msg.user .avatar { background: var(--blue); }
+  .msg.ai .avatar { background: var(--accent); }
+  .msg .role .time { color: var(--text-3); font-weight: 400; font-size: 11px; }
+  .msg .role .spacer { flex: 1; }
+  .msg .role .actions { display: flex; gap: 4px; opacity: 0; transition: .15s; }
+  .msg:hover .role .actions { opacity: 1; }
+  .msg .role .actions button {
+    background: none; border: none; color: var(--text-3); cursor: pointer;
+    font-size: 12px; padding: 2px 6px; border-radius: 4px;
+  }
+  .msg .role .actions button:hover { background: var(--bg-hover); color: var(--text-1); }
+  .bubble {
+    font-size: 13.5px; line-height: 1.75; color: var(--text-1);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 14px;
+  }
+  .msg .ref-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 11.5px;
+    background: rgba(91,155,213,.12); color: var(--blue);
+    border: 1px solid rgba(91,155,213,.35); border-radius: 5px;
+    padding: 1px 7px; margin: 0 2px;
+  }
+  .msg .img-attach {
+    display: inline-block; margin-top: 8px; margin-right: 8px;
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    width: 140px; height: 90px; position: relative; overflow: hidden;
+    background: linear-gradient(135deg, #2b2f3a, #3a3f4d);
+  }
+  .msg .img-attach::after {
+    content: "🖼 截图 2418×1912";
+    position: absolute; inset: auto 0 0 0;
+    font-size: 10px; color: var(--text-2); text-align: center;
+    background: rgba(0,0,0,.5); padding: 2px;
+  }
+  .msg .img-attach .warn {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--red); font-size: 11px; text-align: center; padding: 6px;
+    background: rgba(224,85,85,.12);
+  }
+
+  /* thinking 折叠块 */
+  .thinking {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    margin-bottom: 8px; overflow: hidden; background: var(--bg-panel);
+  }
+  .thinking .head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 12px; cursor: pointer; font-size: 12px; color: var(--text-3);
+    user-select: none;
+  }
+  .thinking .head:hover { color: var(--text-1); }
+  .thinking .head .arrow { transition: .15s; font-size: 10px; }
+  .thinking.open .head .arrow { transform: rotate(90deg); }
+  .thinking .body {
+    display: none; padding: 4px 14px 12px 26px;
+    font-size: 12px; color: var(--text-3); line-height: 1.8;
+    border-top: 1px dashed var(--border);
+  }
+  .thinking.open .body { display: block; }
+
+  /* 工具调用卡片 */
+  .tool-card {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    margin: 8px 0; background: var(--bg-panel); overflow: hidden;
+  }
+  .tool-card .tc-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; font-family: var(--mono); font-size: 12px;
+    cursor: pointer; user-select: none;
+  }
+  .tool-card .tc-head:hover { background: var(--bg-hover); }
+  .tc-icon {
+    width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 10px;
+  }
+  .tc-icon.read  { background: rgba(91,155,213,.15); color: var(--blue); }
+  .tc-icon.write { background: rgba(111,191,115,.15); color: var(--green); }
+  .tc-icon.bash  { background: rgba(217,161,68,.15); color: var(--yellow); }
+  .tc-icon.task  { background: rgba(160,119,212,.15); color: var(--purple); }
+  .tc-icon.grep  { background: rgba(86,182,194,.15); color: var(--cyan); }
+  .tool-card .tc-head .tool { color: var(--text-1); font-weight: 600; }
+  .tool-card .tc-head .args { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-card .tc-head .status { margin-left: auto; font-size: 11px; flex-shrink: 0; }
+  .tool-card .tc-head .status.ok { color: var(--green); }
+  .tool-card .tc-head .status.run { color: var(--yellow); }
+  .tool-card .tc-body { display: none; border-top: 1px solid var(--border); }
+  .tool-card.open .tc-body { display: block; }
+  .tool-card .tc-body pre {
+    padding: 10px 14px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--text-2); line-height: 1.7; overflow-x: auto;
+    max-height: 300px; overflow-y: auto; white-space: pre;
+  }
+
+  /* diff 渲染 */
+  .diff { font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
+  .diff .dl { padding: 0 14px; white-space: pre; }
+  .diff .dl.add { background: rgba(111,191,115,.12); color: #9fd9a3; }
+  .diff .dl.del { background: rgba(224,85,85,.12); color: #eb9a9a; }
+  .diff .dl.ctx { color: var(--text-3); }
+  .diff .dl.hunk { color: var(--purple); padding: 2px 14px; }
+  .diff-stats { display: flex; gap: 10px; padding: 6px 14px; font-size: 11px; color: var(--text-3); border-top: 1px solid var(--border); }
+  .diff-stats b.ins { color: var(--green); }
+  .diff-stats b.del { color: var(--red); }
+
+  /* subagent 运行卡 */
+  .task-card { border: 1px solid rgba(160,119,212,.4); background: rgba(160,119,212,.06); }
+  .task-card .tc-body { display: block; }
+  .task-card .sub-steps { padding: 8px 14px 12px 36px; font-size: 12px; color: var(--text-3); }
+  .task-card .sub-steps .step { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-family: var(--mono); font-size: 11.5px; }
+  .task-card .sub-steps .step .st { flex-shrink: 0; }
+  .task-card .sub-steps .step.done .st { color: var(--green); }
+  .task-card .sub-steps .step.run .st { color: var(--yellow); }
+  .task-card .sub-steps .step.run { color: var(--text-1); }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+  .dotpulse span { animation: pulse 1.2s infinite; }
+  .dotpulse span:nth-child(2) { animation-delay: .2s; }
+  .dotpulse span:nth-child(3) { animation-delay: .4s; }
+
+  /* ---------- Composer ---------- */
+  .queue-bar { padding: 0 24px; }
+  .queue-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(91,155,213,.1); border: 1px solid rgba(91,155,213,.35);
+    color: var(--blue); border-radius: 18px; padding: 4px 12px; font-size: 12px;
+    margin-bottom: 6px;
+  }
+  .queue-pill .cancel { cursor: pointer; opacity: .7; }
+  .queue-pill .cancel:hover { opacity: 1; }
+
+  .composer-wrap { padding: 0 24px 14px; flex-shrink: 0; }
+  .run-state {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 4px 8px; font-size: 12px; color: var(--text-3);
+  }
+  .run-state .spinner {
+    width: 12px; height: 12px; border: 2px solid var(--accent);
+    border-top-color: transparent; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  .run-state .cmd { color: var(--purple); }
+  .composer {
+    border: 1px solid var(--border-strong); border-radius: var(--radius);
+    background: var(--bg-panel); transition: border-color .15s;
+  }
+  .composer:focus-within { border-color: var(--accent); }
+  .composer .attach-row {
+    display: flex; gap: 8px; padding: 8px 10px 0; flex-wrap: wrap;
+  }
+  .composer .attach-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-2);
+    background: var(--bg-hover); border: 1px solid var(--border-strong);
+    border-radius: 6px; padding: 3px 8px;
+  }
+  .composer .attach-chip .x { cursor: pointer; color: var(--text-3); }
+  .composer textarea {
+    width: 100%; border: none; outline: none; resize: none;
+    background: transparent; color: var(--text-1);
+    font-family: var(--sans); font-size: 13.5px; line-height: 1.6;
+    padding: 10px 14px 4px; max-height: 180px;
+  }
+  .composer .bar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px 8px;
+  }
+  .composer .bar .icon-btn {
+    background: none; border: none; color: var(--text-3); cursor: pointer;
+    font-size: 15px; padding: 4px 7px; border-radius: 6px;
+  }
+  .composer .bar .icon-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+  .composer .bar .icon-btn.disabled { opacity: .35; cursor: not-allowed; }
+  .composer .bar .spacer { flex: 1; }
+  .composer .bar .hint { font-size: 11px; color: var(--text-3); }
+  .send-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .send-btn:hover { background: #c9663f; }
+  .send-btn.stop { background: var(--red); }
+
+  /* 补全面板 */
+  .completion-panel {
+    position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+    background: var(--bg-panel); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: 0 -12px 40px rgba(0,0,0,.45);
+    max-height: 320px; overflow-y: auto; z-index: 50; display: none;
+  }
+  .completion-panel.open { display: block; }
+  .completion-panel .cp-group {
+    padding: 7px 14px 3px; font-size: 10.5px; font-weight: 700;
+    color: var(--text-3); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .completion-panel .cp-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 14px; cursor: pointer; font-size: 12.5px;
+  }
+  .completion-panel .cp-item .name { font-family: var(--mono); color: var(--text-1); min-width: 130px; }
+  .completion-panel .cp-item .desc { color: var(--text-3); font-size: 11.5px; }
+  .completion-panel .cp-item.sel { background: var(--accent-soft); }
+  .completion-panel .cp-item.sel .name { color: var(--accent); }
+  .completion-panel .cp-item .file-ico { color: var(--text-3); font-size: 11px; }
+  .completion-panel .cp-empty { padding: 14px; color: var(--text-3); font-size: 12px; text-align: center; }
+
+  /* 侧栏 */
+  .side-tabs { display: flex; padding: 8px 10px 0; gap: 2px; }
+  .side-tabs .st {
+    flex: 1; text-align: center; font-size: 12px; color: var(--text-3);
+    padding: 6px 0; border-radius: 6px; cursor: pointer;
+  }
+  .side-tabs .st.active { background: var(--bg-active); color: var(--text-1); font-weight: 600; }
+  .token-meter {
+    margin: auto 12px 12px; padding: 10px 12px;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .token-meter .row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-bottom: 4px; }
+  .token-meter .bar-bg { height: 5px; border-radius: 4px; background: var(--bg-active); overflow: hidden; }
+  .token-meter .bar-fill { height: 100%; width: 38%; background: linear-gradient(90deg, var(--accent), var(--yellow)); border-radius: 4px; }
+  .token-meter .foot { font-size: 10px; color: var(--text-3); margin-top: 5px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="title"><span class="logo">M</span> MCode — mcode <span style="color:var(--text-3)">v0.2.6</span></div>
+    <div class="spacer"></div>
+    <div class="win-actions">＋&nbsp;&nbsp;▱&nbsp;&nbsp;⌕</div>
+  </div>
+
+  <div class="app">
+    <!-- ================= 侧栏 ================= -->
+    <aside class="sidebar">
+      <div class="side-tabs">
+        <div class="st active" data-tab="sessions">会话</div>
+        <div class="st" data-tab="files">文件</div>
+      </div>
+      <div class="side-head" style="padding-top:10px">
+        <button class="btn primary" style="width:100%;justify-content:center" onclick="toast('新建会话：清空消息流，写新 session-id.jsonl')">＋ 新建会话</button>
+      </div>
+      <div class="side-section">当前目录会话 <span class="add-btn" onclick="toast('跳转会话管理页')">⋯</span></div>
+      <div class="side-list" id="session-list">
+        <div class="side-item active"><span class="dot"></span>修复多模态图片识别异常<span class="meta">12轮</span></div>
+        <div class="side-item"><span class="dot"></span>three.min.js 加载排查<span class="meta">08轮</span></div>
+        <div class="side-item"><span class="dot"></span>/pua:on 全局开启配置<span class="meta">03轮</span></div>
+        <div class="side-item"><span class="dot"></span>重试次数对齐 CC 改 10<span class="meta">02轮</span></div>
+      </div>
+      <div class="side-section">其他项目</div>
+      <div class="side-list" style="flex:0 0 auto">
+        <div class="side-item"><span class="dot" style="background:var(--text-3)"></span>~/developCode/self/mcode_demo</div>
+      </div>
+      <div class="token-meter">
+        <div class="row"><span>上下文占用</span><span style="color:var(--text-1)">61k / 160k</span></div>
+        <div class="bar-bg"><div class="bar-fill"></div></div>
+        <div class="foot">38% · 距自动 compact 阈值还有 62%（/context）</div>
+      </div>
+    </aside>
+
+    <!-- ================= 主区 ================= -->
+    <div class="main">
+      <div class="topbar">
+        <span class="badge" title="当前模型 · 点击 /model 切换">🧠 glm-4.7-multimodal ▾</span>
+        <span class="path">~/developCode/self/mcode</span>
+        <span class="badge" id="mode-badge" title="点击或 shift+tab 切换权限模式"></span>
+        <span class="badge" title="token 统计 · /token">⏱ 12.4k in · 3.1k out · ¥0.42</span>
+        <div class="spacer"></div>
+        <button class="btn ghost" onclick="toast('打开设置中心')">⚙ 设置</button>
+        <button class="btn ghost" onclick="toast('打开扩展生态：skills / agents / MCP / hooks')">🧩 扩展</button>
+      </div>
+
+      <!-- 消息流 -->
+      <div class="messages" id="messages">
+        <!-- 用户消息：@ 引用 + 图片 -->
+        <div class="msg user">
+          <div class="role"><span class="avatar">你</span> 用户 <span class="time">14:32</span>
+            <div class="spacer"></div>
+            <div class="actions"><button onclick="toast('已复制')">复制</button><button onclick="toast('回退到此消息（/rewind）')">⏪ rewind</button></div>
+          </div>
+          <div class="bubble">看下 <span class="ref-chip">@src/api/client.ts</span> 里图片附件是怎么传给模型的，识别一直失败，错误日志在 <span class="ref-chip">@画布/整体规划.png</span> 里，帮我对照排查。</div>
+          <div class="img-attach"></div>
+          <div class="img-attach"><div class="warn">⚠ 当前模型未标记多模态，图片已拒绝上传（可发文本）</div></div>
+        </div>
+
+        <!-- AI 回复：thinking 折叠 + 工具卡片 -->
+        <div class="msg ai">
+          <div class="role"><span class="avatar">M</span> MCode <span class="badge mode-auto" style="font-size:10px;padding:1px 8px">glm-4.7</span> <span class="time">14:32</span>
+            <div class="spacer"></div>
+            <div class="actions"><button onclick="toast('已复制')">复制</button><button onclick="toast('重新生成')">↻</button></div>
+          </div>
+          <div class="thinking">
+            <div class="head" onclick="this.parentElement.classList.toggle('open')">
+              <span class="arrow">▶</span> 💭 思考过程 · 4.2s <span style="margin-left:auto">已折叠 · 812 tokens</span>
+            </div>
+            <div class="body">用户报告图片附件识别失败。先读 client.ts 的附件上传逻辑，检查：(1) 多模态标记是否读取 config 的 multimodal 字段；(2) 图片是否走了 base64 data URL 正确封装；(3) Responses API 的 image input 格式。对照截图里的报错堆栈定位。</div>
+          </div>
+
+          <!-- read_file 卡片 -->
+          <div class="tool-card" onclick="this.classList.toggle('open')">
+            <div class="tc-head">
+              <span class="tc-icon read">📄</span>
+              <span class="tool">read_file</span>
+              <span class="args">src/api/client.ts · L1-120</span>
+              <span class="status ok">✓ 120 行</span>
+            </div>
+            <div class="tc-body"><pre> 42 │ export async function sendMessage(msg: Message) {
+ 43 │   const parts: Part[] = [{ type: 'text', text: msg.text }]
+ 44 │   for (const att of msg.attachments ?? []) {
+ 45 │     // BUG: 未检查 model.multimodal，直接拼接 image_url
+ 46 │     parts.push({ type: 'image_url', image_url: att.dataUrl })
+ 47 │   }</pre></div>
+          </div>
+
+          <!-- bash 卡片 -->
+          <div class="tool-card open" onclick="this.classList.toggle('open')">
+            <div class="tc-head">
+              <span class="tc-icon bash">▶</span>
+              <span class="tool">bash</span>
+              <span class="args">grep -n "multimodal" src/config/config.ts</span>
+              <span class="status ok">✓ exit 0 · 0.3s</span>
+            </div>
+            <div class="tc-body"><pre>17 │   models: ModelConfig[]     // ModelConfig { name, multimodal?: boolean }</pre></div>
+          </div>
+
+          <!-- edit_file diff 卡片 -->
+          <div class="tool-card open" onclick="this.classList.toggle('open')">
+            <div class="tc-head">
+              <span class="tc-icon write">✏️</span>
+              <span class="tool">edit_file</span>
+              <span class="args">src/api/client.ts</span>
+              <span class="status ok">✓ +6 −2</span>
+            </div>
+            <div class="tc-body">
+              <div class="diff">
+                <div class="dl hunk">@@ -42,9 +42,13 @@ export async function sendMessage</div>
+                <div class="dl ctx">   const parts: Part[] = [{ type: 'text', text: msg.text }]</div>
+                <div class="dl ctx">   for (const att of msg.attachments ?? []) {</div>
+                <div class="dl del">-    // BUG: 未检查 model.multimodal，直接拼接 image_url</div>
+                <div class="dl del">-    parts.push({ type: 'image_url', image_url: att.dataUrl })</div>
+                <div class="dl add">+    if (!activeModel.multimodal) {</div>
+                <div class="dl add">+      // 非多模态模型：拒绝图片，回传提示文本</div>
+                <div class="dl add">+      parts.push({ type: 'text', text: `[图片已忽略：${att.name}，当前模型不支持多模态]` })</div>
+                <div class="dl add">+      continue</div>
+                <div class="dl add">+    }</div>
+                <div class="dl add">+    parts.push({ type: 'image_url', image_url: att.dataUrl })</div>
+                <div class="dl ctx">   }</div>
+              </div>
+              <div class="diff-stats"><span>src/api/client.ts</span><span><b class="ins">+6</b> <b class="del">−2</b></span><span style="margin-left:auto">⏪ /rewind 可回退此修改</span></div>
+            </div>
+          </div>
+
+          <!-- subagent task 卡 -->
+          <div class="tool-card task-card">
+            <div class="tc-head">
+              <span class="tc-icon task">⚡</span>
+              <span class="tool">task</span>
+              <span class="args">code-explorer → 独立上下文 · 只读白名单</span>
+              <span class="status run"><span class="spin">◌</span> 运行中</span>
+            </div>
+            <div class="tc-body">
+              <div class="sub-steps">
+                <div class="step done"><span class="st">✓</span> glob src/**/*.ts · 34 个文件</div>
+                <div class="step done"><span class="st">✓</span> grep "image_url" · 3 处命中</div>
+                <div class="step run"><span class="st"><span class="spin">◌</span></span> read_file src/tools/validate.ts · 校验链路…</div>
+                <div class="step"><span class="st">·</span> 汇总报告回传主上下文</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bubble">已定位并修复：问题出在 <b>client.ts:46</b> 拼接图片前没有校验 <b>model.multimodal</b> 标记。修复逻辑：非多模态模型的图片附件会被拒绝并降级为文本提示（对齐你上次提的需求）。另外 subagent 正在并行排查校验链路，报告出来我会补充结论。</div>
+        </div>
+
+        <!-- 运行中的新一轮 -->
+        <div class="msg ai" id="running-msg" style="display:none">
+          <div class="role"><span class="avatar">M</span> MCode <span class="time">刚刚</span></div>
+          <div class="run-state" style="padding:0 0 4px">
+            <span class="spinner"></span><span id="running-text">Thinking<span class="dotpulse"><span>.</span><span>.</span><span>.</span></span></span>
+            <span style="margin-left:auto;color:var(--text-3);font-size:11px">ESC 打断</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Composer ================= -->
+      <div class="queue-bar" id="queue-bar"></div>
+
+      <div class="composer-wrap">
+        <div class="run-state" id="idle-state">
+          <span style="color:var(--purple)" id="active-cmd">/goal active</span>
+          <span style="color:var(--text-3)">· 输入消息，<kbd>/</kbd> 指令 <kbd>@</kbd> 引用文件</span>
+        </div>
+
+        <div class="composer" style="position:relative">
+          <!-- / 与 @ 补全面板 -->
+          <div class="completion-panel" id="completion-panel"></div>
+          <div class="attach-row" id="attach-row" style="display:none">
+            <span class="attach-chip">🖼 Snipaste_2026-10-17.png (1.2MB)<span class="x" onclick="removeAttach()">✕</span></span>
+            <span class="attach-chip" style="color:var(--green);border-color:rgba(111,191,115,.4)">✓ glm-4.7-multimodal 支持多模态</span>
+          </div>
+          <textarea id="input" rows="1" placeholder="向 MCode 发送消息…  （/ 指令 · @ 文件 · shift+tab 切模式）"></textarea>
+          <div class="bar">
+            <button class="icon-btn" title="附加图片（拖拽 / 粘贴 / 选择）" onclick="addAttach()">🖼</button>
+            <button class="icon-btn" title="切换模型 (/model)" onclick="toast('/model：弹出模型选择器（读取 providers 列表）')">🧠</button>
+            <button class="icon-btn" title="追加工作目录 (/add-dir)" onclick="toast('/add-dir：选择额外工作目录')">📁</button>
+            <div class="spacer"></div>
+            <span class="hint"><kbd>⏎</kbd> 发送 · <kbd>⇧⏎</kbd> 换行 · <kbd>⇧Tab</kbd> 模式 · <kbd>ESC</kbd> 打断</span>
+            <button class="send-btn" id="send-btn" onclick="onSend()">➤ 发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 权限确认弹窗（manual 模式，/permissions 交互对齐） -->
+<div class="overlay" id="perm-overlay">
+  <div class="modal perm-card">
+    <div class="modal-head">⚠ 权限确认 — manual 模式<span class="close" data-close>✕</span></div>
+    <div class="modal-body">
+      <div class="tool-line"><span class="tool-name"></span> 请求执行以下操作：</div>
+      <div class="tool-args"></div>
+      <div class="perm-opts">
+        <div class="perm-opt" data-act="allow"><span class="key">1</span> 允许本次执行<span class="sub">仅这一次</span></div>
+        <div class="perm-opt" data-act="always"><span class="key">2</span> 总是允许（本会话记忆）<span class="sub">写入权限会话配置</span></div>
+        <div class="perm-opt" data-act="deny"><span class="key">3</span> 拒绝<span class="sub">拒绝原因回传给模型</span></div>
+      </div>
+    </div>
+    <div class="modal-foot"><span style="margin-right:auto;font-size:11px;color:var(--text-3)">对齐 CLI 权限门控 permission/manager.ts · plan 模式下只读工具自动放行</span></div>
+  </div>
+</div>
+
+<script src="../js/shared.js"></script>
+<script src="../js/chat.js"></script>
+</body>
+</html>

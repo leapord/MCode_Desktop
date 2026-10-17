@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode Desktop · 首次启动引导</title>
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; }
+  .wizard { width: 620px; max-width: 94vw; }
+  .steps { display: flex; gap: 6px; margin-bottom: 22px; }
+  .steps .step {
+    flex: 1; height: 4px; border-radius: 3px; background: var(--bg-active);
+  }
+  .steps .step.done { background: var(--accent); }
+  .steps .step.cur { background: linear-gradient(90deg, var(--accent) 50%, var(--bg-active) 50%); }
+  .panel { padding: 30px 34px; }
+  .panel h1 { font-size: 20px; margin-bottom: 6px; }
+  .panel .sub { color: var(--text-2); font-size: 13px; margin-bottom: 24px; line-height: 1.7; }
+  .opt-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .opt {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 12px 14px; cursor: pointer; transition: .12s;
+  }
+  .opt:hover { border-color: var(--text-2); }
+  .opt.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .opt .t { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .opt .t .flag { font-size: 16px; }
+  .opt .d { font-size: 11.5px; color: var(--text-3); margin-top: 4px; line-height: 1.6; }
+  .opt.mode-passon.sel { border-color: var(--red); background: rgba(224,85,85,.1); }
+  .warn-box {
+    display: none; margin-top: 14px; padding: 10px 14px;
+    border: 1px solid rgba(224,85,85,.5); border-radius: var(--radius-sm);
+    background: rgba(224,85,85,.08); color: var(--red); font-size: 12px; line-height: 1.7;
+  }
+  .warn-box.show { display: block; }
+  .foot { display: flex; justify-content: space-between; margin-top: 26px; }
+  .provider-form { display: none; }
+  .provider-form.show { display: block; }
+</style>
+</head>
+<body>
+<div class="wizard">
+  <div class="steps">
+    <div class="step cur" id="bar1"></div><div class="step" id="bar2"></div><div class="step" id="bar3"></div><div class="step" id="bar4"></div>
+  </div>
+
+  <div class="panel card">
+    <!-- Step 1 语言 -->
+    <div id="step1">
+      <h1>👋 欢迎使用 MCode Desktop</h1>
+      <div class="sub">首次启动需要完成 3 项初始化配置。所有配置写入 <code>~/.mcode/config.json</code>，与 CLI 版完全互通——先选语言环境：</div>
+      <div class="opt-grid" id="lang-grid">
+        <div class="opt sel"><div class="t"><span class="flag">🇨🇳</span>简体中文</div><div class="d">zh_CN · 探测自系统 LANG，界面文案与模型回复语言同步切换</div></div>
+        <div class="opt"><div class="t"><span class="flag">🇹🇼</span>繁體中文</div><div class="d">zh_TW</div></div>
+        <div class="opt"><div class="t"><span class="flag">🇺🇸</span>English</div><div class="d">en_US</div></div>
+        <div class="opt"><div class="t"><span class="flag">🇯🇵</span>日本語</div><div class="d">ja_JP · 更多语言预留扩展位</div></div>
+      </div>
+      <div class="foot"><span style="font-size:11px;color:var(--text-3)">切换即时生效：locales 字符串表 + 系统提示词语言指令双链路</span><button class="btn primary" onclick="go(2)">下一步 →</button></div>
+    </div>
+
+    <!-- Step 2 供应商 -->
+    <div id="step2" style="display:none">
+      <h1>🔌 配置模型供应商</h1>
+      <div class="sub">统一走 OpenAI Responses 协议，通过 baseURL / model 接入任意厂商。apiKey 只存环境变量名，不落明文。</div>
+      <div class="opt-grid" id="prov-grid" style="margin-bottom:16px">
+        <div class="opt sel" onclick="showProvForm()"><div class="t"><span class="flag">🤖</span>自定义 Provider</div><div class="d">baseURL + Responses 协议（GLM / DeepSeek / Qwen / OpenAI…）</div></div>
+        <div class="opt"><div class="t"><span class="flag">🦙</span>本地模型</div><div class="d">Ollama / vLLM 本地端点</div></div>
+      </div>
+      <div class="provider-form show" id="prov-form">
+        <div class="field"><label>Provider 名称</label><input type="text" value="zhipu" ></div>
+        <div class="field"><label>Base URL</label><input type="text" value="https://open.bigmodel.cn/api/paas/v4"></div>
+        <div class="field"><label>API Key（环境变量名）</label>
+          <input type="text" value="ZHIPU_API_KEY">
+          <div class="hint">引用环境变量名而非密钥本体 · <span style="color:var(--text-3)">桌面版提供系统 Keychain 可选项</span></div>
+        </div>
+        <div class="field"><label>可用模型（每行一个，multimodal 列标记多模态）</label>
+          <textarea rows="3" readonly>glm-4.7-multimodal    [multimodal ✓]
+glm-4.7-air
+glm-4.6</textarea>
+          <div class="hint">带 <b>multimodal</b> 标记的模型才允许接收图片附件输入</div>
+        </div>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="go(1)">← 上一步</button><button class="btn primary" onclick="go(3)">下一步 →</button></div>
+    </div>
+
+    <!-- Step 3 权限模式 -->
+    <div id="step3" style="display:none">
+      <h1>🛡 默认权限模式</h1>
+      <div class="sub">决定工具调用（bash / 写文件等）是否需要你确认。会话内随时 <kbd>shift+tab</kbd> 切换。</div>
+      <div class="opt-grid" id="mode-grid">
+        <div class="opt sel mode-passon" id="opt-passon"><div class="t"><span style="color:var(--red)">●</span>passon（默认）</div><div class="d">全自动放行，零打断。适合信任度高的日常开发</div></div>
+        <div class="opt"><div class="t"><span style="color:var(--yellow)">●</span>manual</div><div class="d">每个非只读工具执行前弹确认</div></div>
+        <div class="opt"><div class="t"><span style="color:var(--blue)">●</span>auto</div><div class="d">白名单自动放行，其余确认</div></div>
+        <div class="opt"><div class="t"><span style="color:var(--purple)">●</span>plan</div><div class="d">只读模式，只输出计划不落盘</div></div>
+      </div>
+      <div class="warn-box show" id="passon-warn">⚠ <b>passon 为全自动放行模式</b>：bash / 写文件等破坏性操作将不经确认直接执行。请确认你了解此风险，或改选 manual / auto / plan。</div>
+      <div class="foot"><button class="btn ghost" onclick="go(2)">← 上一步</button><button class="btn primary" onclick="go(4)">完成初始化 →</button></div>
+    </div>
+
+    <!-- Step 4 完成 -->
+    <div id="step4" style="display:none">
+      <h1>✅ 初始化完成</h1>
+      <div class="sub">已写入 <code>~/.mcode/config.json</code>：</div>
+      <pre style="background:var(--bg-window);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12px;color:var(--text-2);line-height:1.8">{
+  "language": "zh_CN",
+  "activeProvider": "zhipu",
+  "providers": [{ "name": "zhipu", "baseURL": "https://open.bigmodel.cn/api/paas/v4",
+                  "apiKeyEnv": "ZHIPU_API_KEY", "models": [...] }],
+  "defaultMode": "passon"
+}</pre>
+      <div class="sub" style="margin-top:16px">ECC 核心资产（277 skills / 67 agents / hooks / rules）已随安装包内置，无需额外安装。之后可随时在设置中心修改以上任意配置。</div>
+      <div class="foot"><button class="btn ghost" onclick="go(3)">← 上一步</button><a class="btn primary" href="chat.html" style="text-decoration:none">进入对话 →</a></div>
+    </div>
+  </div>
+</div>
+
+<script src="../js/shared.js"></script>
+<script>
+  function go(n) {
+    for (let i = 1; i <= 4; i++) {
+      document.getElementById('step' + i).style.display = i === n ? '' : 'none';
+      document.getElementById('bar' + i).className = 'step' + (i < n ? ' done' : i === n ? ' cur' : '');
+    }
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('#lang-grid .opt, #prov-grid .opt').forEach(o =>
+    o.addEventListener('click', () => {
+      o.parentElement.querySelectorAll('.opt').forEach(x => x.classList.remove('sel'));
+      o.classList.add('sel');
+    }));
+  document.querySelectorAll('#mode-grid .opt').forEach(o =>
+    o.addEventListener('click', () => {
+      document.querySelectorAll('#mode-grid .opt').forEach(x => x.classList.remove('sel'));
+      o.classList.add('sel');
+      document.getElementById('passon-warn').classList.toggle('show', o.id === 'opt-passon');
+    }));
+</script>
+</body>
+</html>

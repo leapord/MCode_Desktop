@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode Desktop · 设置中心</title>
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  .settings-wrap { flex: 1; overflow-y: auto; padding: 24px 32px; }
+  .settings-wrap h2 { font-size: 15px; margin: 0 0 4px; }
+  .settings-wrap .sec-sub { font-size: 12px; color: var(--text-3); margin-bottom: 14px; }
+  .section { margin-bottom: 30px; max-width: 860px; }
+  .prov-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .prov-card .p-logo {
+    width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+    background: var(--bg-active);
+  }
+  .prov-card .p-name { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+  .prov-card .p-meta { font-size: 11.5px; color: var(--text-3); font-family: var(--mono); margin-top: 3px; }
+  .prov-card.active { border-color: var(--accent); }
+  .prov-card .spacer { flex: 1; }
+  .chip {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .chip.gray { background: var(--bg-active); color: var(--text-3); }
+  .row-flex { display: flex; gap: 12px; }
+  .row-flex > * { flex: 1; }
+  .mode-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .mode-card {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 12px; cursor: pointer; font-size: 12px;
+  }
+  .mode-card .t { font-weight: 700; font-size: 13px; display: flex; gap: 7px; align-items: center; margin-bottom: 5px; }
+  .mode-card .d { color: var(--text-3); font-size: 11px; line-height: 1.6; }
+  .mode-card.sel { border-width: 2px; padding: 11px; }
+  .mode-card.sel.mode-passon { border-color: var(--red); }
+  .mode-card.sel.mode-manual { border-color: var(--yellow); }
+  .mode-card.sel.mode-auto { border-color: var(--blue); }
+  .mode-card.sel.mode-plan { border-color: var(--purple); }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="title"><span class="logo">M</span> MCode — 设置</div>
+    <div class="spacer"></div>
+    <div class="win-actions">▱&nbsp;&nbsp;✕</div>
+  </div>
+  <div class="app" style="flex-direction:column">
+    <div class="topbar">
+      <span class="badge">⚙ 设置中心</span>
+      <span class="path">~/.mcode/config.json · 唯一事实源（CLI 双端互通）</span>
+      <div class="spacer"></div>
+      <button class="btn primary" onclick="toast('✓ 配置已保存并回写 config.json')">保存</button>
+    </div>
+
+    <div class="settings-wrap">
+      <!-- 供应商 -->
+      <div class="section">
+        <h2>🔌 模型供应商</h2>
+        <div class="sec-sub">对齐 CLI <code>mcode add_provider / switch / reset</code> · Responses 协议统一接入 · apiKey 只存环境变量名</div>
+
+        <div class="prov-card card active">
+          <div class="p-logo">🤖</div>
+          <div>
+            <div class="p-name">zhipu <span class="chip">当前激活</span></div>
+            <div class="p-meta">https://open.bigmodel.cn/api/paas/v4 · key: $ZHIPU_API_KEY</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn ghost" onclick="toast('/model：运行时切换模型（已激活的供应商不可切换）')">模型 ▾</button>
+          <button class="btn ghost" onclick="toast('编辑供应商配置')">编辑</button>
+        </div>
+        <div class="prov-card card">
+          <div class="p-logo">🦙</div>
+          <div>
+            <div class="p-name">ollama-local <span class="chip gray">备用</span></div>
+            <div class="p-meta">http://localhost:11434/v1 · 无需鉴权</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn ghost" onclick="toast('✓ 已切换 activeProvider → ollama-local（等价 mcode switch）')">设为激活</button>
+          <button class="btn ghost" onclick="toast('编辑供应商配置')">编辑</button>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn" onclick="toast('add_provider：弹出供应商配置向导（同引导第 2 步）')">＋ 添加供应商</button>
+          <button class="btn danger" onclick="toast('mcode reset：清空 providers 并回到首次启动引导（语言偏好保留）')">⟲ 重置供应商</button>
+        </div>
+
+        <div style="margin-top:14px" class="panel">
+          <table class="tbl">
+            <tr><th>模型</th><th>multimodal</th><th>说明</th></tr>
+            <tr><td class="mono" style="color:var(--accent)">glm-4.7-multimodal ▸使用中</td><td>✓ 支持</td><td>图片附件可上传为输入</td></tr>
+            <tr><td class="mono">glm-4.7-air</td><td>—</td><td>图片附件将被拒绝并降级为文本提示</td></tr>
+            <tr><td class="mono">glm-4.6</td><td>—</td><td>同上</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 语言 -->
+      <div class="section">
+        <h2>🌐 语言环境（/language）</h2>
+        <div class="sec-sub">同时作用于界面文案与模型回复语言（系统提示词注入），跨会话持久</div>
+        <div class="row-flex" style="max-width:560px">
+          <select onchange="toast('✓ 语言 → ' + this.value + '：界面 locales + 系统提示词双切换')">
+            <option selected>简体中文 zh_CN</option>
+            <option>繁體中文 zh_TW</option>
+            <option>English en_US</option>
+            <option>日本語 ja_JP</option>
+            <option>한국어 ko_KR</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 权限 -->
+      <div class="section">
+        <h2>🛡 权限（/permissions）</h2>
+        <div class="sec-sub">默认模式 + allow/deny 规则列表 · 会话内 shift+tab 临时切换</div>
+        <div class="mode-cards" style="margin-bottom:14px">
+          <div class="mode-card mode-passon sel"><div class="t"><span style="color:var(--red)">●</span>passon</div><div class="d">全自动放行（默认）</div></div>
+          <div class="mode-card mode-manual"><div class="t"><span style="color:var(--yellow)">●</span>manual</div><div class="d">非只读工具执行前确认</div></div>
+          <div class="mode-card mode-auto"><div class="t"><span style="color:var(--blue)">●</span>auto</div><div class="d">白名单放行其余确认</div></div>
+          <div class="mode-card mode-plan"><div class="t"><span style="color:var(--purple)">●</span>plan</div><div class="d">只读，输出计划不落盘</div></div>
+        </div>
+        <div class="panel">
+          <table class="tbl">
+            <tr><th>规则</th><th>工具</th><th>动作</th><th></th></tr>
+            <tr><td class="mono">bash(npm test*)</td><td>bash</td><td style="color:var(--green)">ALLOW</td><td><button class="btn ghost" onclick="toast('移除规则')">删除</button></td></tr>
+            <tr><td class="mono">edit_file(src/**)</td><td>edit_file</td><td style="color:var(--green)">ALLOW</td><td><button class="btn ghost" onclick="toast('移除规则')">删除</button></td></tr>
+            <tr><td class="mono">bash(rm *)</td><td>bash</td><td style="color:var(--red)">DENY</td><td><button class="btn ghost" onclick="toast('移除规则')">删除</button></td></tr>
+          </table>
+          <div style="padding:10px 12px;border-top:1px solid var(--border)">
+            <button class="btn" onclick="toast('添加权限规则：工具 + 模式 + 范围通配')">＋ 添加规则</button>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--text-3)">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <span class="switch"><input type="checkbox" checked><i></i></span>
+            「总是允许」决策写入会话配置并在此规则表中沉淀
+          </label>
+        </div>
+      </div>
+
+      <!-- token 统计 -->
+      <div class="section">
+        <h2>📊 Token 统计（/token · /cost）</h2>
+        <div class="sec-sub">按模型分组的全量调用明细（与 CLI <code>mcode token</code> 同源）</div>
+        <div class="panel">
+          <table class="tbl">
+            <tr><th>模型</th><th>输入</th><th>输出</th><th>缓存读</th><th>缓存写</th><th>费用</th></tr>
+            <tr><td class="mono">glm-4.7-multimodal</td><td>1.24M</td><td>312k</td><td>890k</td><td>110k</td><td>¥38.42</td></tr>
+            <tr><td class="mono">glm-4.7-air</td><td>98k</td><td>21k</td><td>—</td><td>—</td><td>¥0.86</td></tr>
+            <tr><td class="mono" style="color:var(--text-1)"><b>合计</b></td><td><b>1.34M</b></td><td><b>333k</b></td><td><b>890k</b></td><td><b>110k</b></td><td><b>¥39.28</b></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 其他 -->
+      <div class="section">
+        <h2>🧰 其他</h2>
+        <div class="card" style="display:flex;flex-direction:column;gap:12px;max-width:560px">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer"><span class="switch"><input type="checkbox" checked><i></i></span><div>开机自动启动 · 启动时恢复上次会话（--continue 语义）</div></label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer"><span class="switch"><input type="checkbox" checked><i></i></span><div>自动 compact：上下文逼近上限时压缩历史</div></label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer"><span class="switch"><input type="checkbox"><i></i></span><div>输出风格 output-style：简洁模式</div></label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer"><span class="switch"><input type="checkbox"><i></i></span><div>状态栏 statusline：显示 git 分支与耗时</div></label>
+          <div style="display:flex;gap:10px;margin-top:4px">
+            <button class="btn" onclick="toast('/doctor：安装与配置健康度诊断 → 全部通过')">🩺 /doctor 诊断</button>
+            <button class="btn" onclick="toast('/release-notes：查看版本说明')">📜 版本说明</button>
+            <button class="btn" onclick="toast('检查更新：当前 v0.2.6 已是最新')">⬆ 检查更新</button>
+            <button class="btn" onclick="toast('/bug：打开问题反馈（自动附会话快照）')">🐞 反馈</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="../js/shared.js"></script>
+<script>
+  document.querySelectorAll('.mode-card').forEach(c => c.addEventListener('click', () => {
+    document.querySelectorAll('.mode-card').forEach(x => x.classList.remove('sel'));
+    c.classList.add('sel');
+    toast('defaultMode → ' + c.className.match(/mode-(\w+)/)[1]);
+  }));
+</script>
+</body>
+</html>

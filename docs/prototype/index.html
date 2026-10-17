@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode Desktop · 原型总览</title>
+<link rel="stylesheet" href="css/app.css">
+<style>
+  body { overflow: auto; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 32px 120px; }
+  .hero { display: flex; align-items: center; gap: 18px; margin-bottom: 8px; }
+  .hero .logo-big {
+    width: 52px; height: 52px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--accent), #a34a2e);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 800; color: #fff;
+    box-shadow: 0 8px 30px rgba(217,119,87,.35);
+  }
+  h1 { font-size: 26px; }
+  .sub { color: var(--text-2); margin: 6px 0 28px; line-height: 1.7; }
+  h2 { font-size: 17px; margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .screens { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .screen {
+    display: flex; gap: 14px; align-items: flex-start;
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; cursor: pointer;
+    transition: .15s; text-decoration: none !important;
+  }
+  .screen:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .screen .no {
+    font-family: var(--mono); font-size: 20px; font-weight: 700;
+    color: var(--accent); opacity: .8; line-height: 1;
+  }
+  .screen .t { font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--text-1); }
+  .screen .d { font-size: 12px; color: var(--text-2); line-height: 1.7; }
+  .screen .star { color: var(--accent); font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; padding: 9px 12px; color: var(--text-3); font-size: 11px;
+       text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-strong); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text-2); vertical-align: top; line-height: 1.6; }
+  td.cli { font-family: var(--mono); font-size: 12px; color: var(--text-1); white-space: nowrap; }
+  td.gui { color: var(--text-1); }
+  .tag { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 10px;
+         background: var(--accent-soft); color: var(--accent); font-weight: 600; margin-left: 6px; }
+  .arch {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; font-family: var(--mono); font-size: 12px; color: var(--text-2);
+    line-height: 1.9; white-space: pre; overflow-x: auto;
+  }
+  .arch b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="logo-big">M</div>
+    <div>
+      <h1>MCode Desktop · GUI 桌面版原型</h1>
+      <div class="sub">CLI → Desktop 全能力对齐 · 静态交互原型 v0.1</div>
+    </div>
+  </div>
+
+  <h2>① 原型页面导航（点击进入，每个页面内可实际操作交互逻辑）</h2>
+  <div class="screens">
+    <a class="screen" href="screens/onboarding.html">
+      <div class="no">01</div>
+      <div><div class="t">首次启动引导</div>
+      <div class="d">语言选择 → 模型供应商配置 → 权限默认模式确认 → 写入 config.json。对齐 CLI 首启强制检查流程。</div></div>
+    </a>
+    <a class="screen" href="screens/chat.html">
+      <div class="no">02</div>
+      <div><div class="t">主对话界面 <span class="star">★ 核心页面</span></div>
+      <div class="d">会话侧栏 + 消息流 + 工具卡片 + diff + 权限确认 + thinking + 多模态附件 + 排队插话 + / 与 @ 补全 + shift+tab 四模式。对齐 TUI 全部交互。</div></div>
+    </a>
+    <a class="screen" href="screens/settings.html">
+      <div class="no">03</div>
+      <div><div class="t">设置中心</div>
+      <div class="d">供应商管理（add_provider / switch / reset）、模型列表、语言、权限规则、默认模式、/token 统计。</div></div>
+    </a>
+    <a class="screen" href="screens/sessions.html">
+      <div class="no">04</div>
+      <div><div class="t">会话管理</div>
+      <div class="d">会话列表（resume / continue）、rewind 检查点时间线、导出 / save 快照、context 占用可视化。</div></div>
+    </a>
+    <a class="screen" href="screens/extensions.html">
+      <div class="no">05</div>
+      <div><div class="t">扩展生态</div>
+      <div class="d">skills（渐进式披露）/ agents（subagent）/ plugins / MCP / hooks 五类资产的统一管理面，对齐 ecc-core 内置加载。</div></div>
+    </a>
+  </div>
+
+  <h2>② CLI → Desktop 能力映射（验收清单）</h2>
+  <table>
+    <tr><th style="width:190px">CLI 能力</th><th>Desktop 落点</th></tr>
+    <tr><td class="cli">上下布局 TUI + Banner</td><td class="gui">窗口化主界面：标题栏 + 侧栏 + 消息流 + Composer，Banner 信息（版本/cwd/model）收进顶栏与状态徽章</td></tr>
+    <tr><td class="cli">/ 指令补全（38+ 条）</td><td class="gui">输入框内 <code>/</code> 呼出指令面板，分组展示、↑↓ 循环、tab 补全、参数透传 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">@ 文件/目录补全</td><td class="gui">输入框内 <code>@</code> 呼出文件树面板，目录下探、tab 补全、退格回退 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">shift+tab 四权限模式</td><td class="gui">Composer 模式徽章点击/快捷键循环 passon→manual→auto→plan，颜色语义一致（红/黄/蓝/紫）<span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">工具确认（manual）</td><td class="gui">权限确认弹窗：工具名+参数预览 + 允许/总是允许/拒绝，决策可记忆 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">thinking 折叠</td><td class="gui">AI 消息内可折叠的 reasoning 块，默认折叠、流式时展开 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">工具调用卡片 + diff</td><td class="gui">消息流内联卡片：read/bash/edit 各自渲染形态，diff 红绿行高亮、可展开 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">多模态图片输入</td><td class="gui">Composer 附件按钮 + 拖拽/粘贴图片，非多模态模型时置灰并提示 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">排队插话 / 异步任务</td><td class="gui">运行中输入自动入队，显示队列徽标，回合结束后依次发送 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">ESC 打断（AbortController）</td><td class="gui">运行中发送键变 Stop 按钮，点击即打断；快捷键 ESC 同效 <span class="tag">chat 可试</span></td></tr>
+    <tr><td class="cli">↑/↓ 输入历史召回</td><td class="gui">Composer 历史召回（跨会话持久化、草稿保护）</td></tr>
+    <tr><td class="cli">会话持久化 + resume/continue</td><td class="gui">侧栏会话列表 + 会话管理页（meta 展示、一键恢复）<span class="tag">sessions 页</span></td></tr>
+    <tr><td class="cli">/rewind 检查点</td><td class="gui">检查点时间线：代码快照与对话双轨回退 <span class="tag">sessions 页</span></td></tr>
+    <tr><td class="cli">/compact /context</td><td class="gui">上下文占用可视化（环形分区 + 自动压缩阈值提示）<span class="tag">sessions 页</span></td></tr>
+    <tr><td class="cli">providers / add_provider / switch / reset</td><td class="gui">设置中心供应商卡片式管理，apiKey 只存环境变量名 <span class="tag">settings 页</span></td></tr>
+    <tr><td class="cli">/language 五语言</td><td class="gui">设置中心语言选择，界面文案与模型回复语言双链路 <span class="tag">settings 页</span></td></tr>
+    <tr><td class="cli">/permissions allow/deny</td><td class="gui">设置中心权限规则表 + 默认模式 <span class="tag">settings 页</span></td></tr>
+    <tr><td class="cli">/token /cost</td><td class="gui">按模型分组的 token 明细表 <span class="tag">settings 页</span></td></tr>
+    <tr><td class="cli">skills 渐进式披露</td><td class="gui">扩展页 skill 索引卡：仅 name+description 常驻，命中展开 body <span class="tag">extensions 页</span></td></tr>
+    <tr><td class="cli">task 派发 subagent</td><td class="gui">agent 卡片 + 消息流内 subagent 运行卡（独立上下文标识、并行）<span class="tag">extensions/chat</span></td></tr>
+    <tr><td class="cli">MCP / hooks / plugins</td><td class="gui">扩展页统一管理面：连接状态、生命周期钩子、插件加载顺序（内置→用户→项目）<span class="tag">extensions 页</span></td></tr>
+    <tr><td class="cli">首次启动引导</td><td class="gui">onboarding 向导页：语言→供应商→权限→完成 <span class="tag">onboarding 页</span></td></tr>
+  </table>
+
+  <h2>③ 桌面版架构（一层封装，Agent Core 零改动）</h2>
+  <div class="arch">
+┌────────────────────────────────────────────────────────────┐
+│  <b>Desktop Shell（Electron / Tauri）</b>                       │
+│  窗口管理 · 原生菜单 · 文件对话框 · 系统托盘 · 自动更新        │
+├────────────────────────────────────────────────────────────┤
+│  <b>Renderer（React + TS，复用 TUI 的 hooks 资产）</b>          │
+│  Sidebar / MessageList / Composer / CompletionPanel        │
+│  PermissionDialog / SettingsView / ExtensionsView          │
+└──────────────┬─────────────────────────────────────────────┘
+               │ IPC（类型化 API：invoke / event stream）
+┌──────────────▼─────────────────────────────────────────────┐
+│  <b>Main（Node）＝ 复用 mcode CLI 内核，不改一行</b>            │
+│  agent/loop + harness（context/history/compaction/scheduler）│
+│  tools/registry · permission/manager · sessions · plugins   │
+│  cli.tsx（Ink TUI）保留，与 Desktop 共享同一 Agent Core       │
+└────────────────────────────────────────────────────────────┘
+
+<b>关键决策：</b>
+1. CLI 内核整体平移为 Main 进程库，TUI 与 GUI 双前端共享，保证能力 100% 对齐；
+2. 流式输出 / 工具事件 / 权限请求 / 补全索引 全部走 IPC 事件流，Renderer 是纯视图；
+3. ~/.mcode 目录结构不变（config.json / sessions / skills / plugins），CLI 与 Desktop 数据互通；
+4. PUA / pua:on、异步文件扫描、多模态等近期 CLI 特性由同一 registry 提供，双端同步生效。
+  </div>
+</div>
+<script src="js/shared.js"></script>
+<script>initProtoNav();</script>
+</body>
+</html>

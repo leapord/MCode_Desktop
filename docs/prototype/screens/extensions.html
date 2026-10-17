@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode Desktop · 扩展生态</title>
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  .wrap { flex: 1; overflow-y: auto; padding: 24px 32px; }
+  .wrap h2 { font-size: 15px; margin: 0 0 4px; }
+  .sec-sub { font-size: 12px; color: var(--text-3); margin-bottom: 14px; }
+  .section { margin-bottom: 30px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .ext-card { padding: 14px 16px; cursor: pointer; transition: .12s; }
+  .ext-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .ext-card .e-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .ext-card .e-name { font-weight: 700; font-size: 13px; font-family: var(--mono); }
+  .ext-card .e-desc { font-size: 11.5px; color: var(--text-3); line-height: 1.65; }
+  .ext-card .e-foot { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 9px; font-weight: 600;
+         background: var(--bg-active); color: var(--text-3); }
+  .tag.on { background: var(--accent-soft); color: var(--accent); }
+  .tag.src-u { background: rgba(91,155,213,.12); color: var(--blue); }
+  .tag.src-p { background: rgba(111,191,115,.12); color: var(--green); }
+  .ext-card .e-body {
+    display: none; margin-top: 10px; padding-top: 10px;
+    border-top: 1px dashed var(--border-strong);
+    font-family: var(--mono); font-size: 11px; color: var(--text-2); line-height: 1.7;
+    white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+  }
+  .ext-card.open .e-body { display: block; }
+  /* hooks 表 */
+  /* MCP */
+  .mcp-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; margin-bottom: 8px; }
+  .mcp-row .m-name { font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+  .mcp-row .m-meta { font-size: 11px; color: var(--text-3); font-family: var(--mono); margin-top: 2px; }
+  .mcp-row .spacer { flex: 1; }
+  .load-order {
+    font-family: var(--mono); font-size: 12px; color: var(--text-2); line-height: 2.1;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 18px;
+  }
+  .load-order b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="title"><span class="logo">M</span> MCode — 扩展生态</div>
+    <div class="spacer"></div>
+    <div class="win-actions">▱&nbsp;&nbsp;✕</div>
+  </div>
+  <div class="app" style="flex-direction:column">
+    <div class="topbar">
+      <span class="badge">🧩 扩展生态</span>
+      <span class="path">内置 ecc-core + ~/.mcode + .mcode（项目级）</span>
+      <div class="spacer"></div>
+      <button class="btn" onclick="toast('安装插件：本地目录 / npm 包 / MCP 注册')">＋ 安装扩展</button>
+    </div>
+
+    <div class="wrap">
+      <!-- Skills -->
+      <div class="section">
+        <h2>🎓 Skills（渐进式披露）</h2>
+        <div class="sec-sub">仅 name + description 常驻模型上下文，命中后才展开 body · 内置 277 个 + 用户级 <code>~/.mcode/skills/</code> · 点击卡片预览第二层展开效果</div>
+        <div class="grid">
+          <div class="ext-card card" onclick="this.classList.toggle('open')">
+            <div class="e-head"><span class="e-name">pua</span><span class="tag on">已启用</span></div>
+            <div class="e-desc">PUA 效率教练：完成质量检查、证据要求、换路方法论。/pua:on 全局开启。</div>
+            <div class="e-foot"><span class="tag src-u">~/.mcode/skills</span><span class="tag">/pua</span></div>
+            <div class="e-body">--- name: pua ---
+Use when user invokes /pua… C6 楼生存法则：
+1. 没跑验证不说完成，自报完成只是
+   candidate，贴了输出才是 done
+2. 同一方法失败两次，停，换一条
+   本质不同的路
+……（点击前模型只能看到上面两行元信息）</div>
+          </div>
+          <div class="ext-card card" onclick="this.classList.toggle('open')">
+            <div class="e-head"><span class="e-name">code-review</span><span class="tag on">内置</span></div>
+            <div class="e-desc">Code review — 本地改动或 GitHub PR。调用 code-reviewer agent 输出分级 findings。</div>
+            <div class="e-foot"><span class="tag">ecc-core 内置</span><span class="tag">/code-review</span></div>
+            <div class="e-body">步骤：git diff → 安全清单 → 质量清单 →
+运行测试 → 按 CRITICAL/HIGH/MEDIUM/LOW
+分级输出 findings…</div>
+          </div>
+          <div class="ext-card card" onclick="this.classList.toggle('open')">
+            <div class="e-head"><span class="e-name">save-session</span><span class="tag">薄别名</span></div>
+            <div class="e-desc">已退役为 /save 的别名——数据链路只有一条（harness sessions）。</div>
+            <div class="e-foot"><span class="tag">兼容别名</span><span class="tag">→ /save</span></div>
+            <div class="e-body">body 为空，直接转发 /save 指令。</div>
+          </div>
+          <div class="ext-card card" onclick="this.classList.toggle('open')">
+            <div class="e-head"><span class="e-name">create-skill</span><span class="tag">用户级</span></div>
+            <div class="e-desc">按模板创建新 Agent Skill，含 SKILL.md 规范校验。</div>
+            <div class="e-foot"><span class="tag src-u">~/.mcode/skills</span></div>
+            <div class="e-body">模板结构：frontmatter(name/description)
++ 正文指令 + 可选脚本…</div>
+          </div>
+          <div class="ext-card card" style="opacity:.6">
+            <div class="e-head"><span class="e-name">skill-search 工具</span></div>
+            <div class="e-desc">长尾 skill 收进本地索引，模型按需检索再展开——控制每轮固定 token 开销。</div>
+            <div class="e-foot"><span class="tag">277 个索引 · 常驻仅 2.9k tokens</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agents -->
+      <div class="section">
+        <h2>🤖 Agents（subagent · 67 个内置）</h2>
+        <div class="sec-sub">通过 <code>task</code> 工具派发：独立消息数组 + 独立系统提示词，仅回传最终报告 · 支持并行、工具白名单、低成本 model</div>
+        <div class="grid">
+          <div class="ext-card card">
+            <div class="e-head"><span class="e-name">general-purpose</span><span class="tag on">内置</span></div>
+            <div class="e-desc">多步研究/搜索类任务，工具全量继承。模型按 description 自主派发。</div>
+            <div class="e-foot"><span class="tag">tools: *</span></div>
+          </div>
+          <div class="ext-card card">
+            <div class="e-head"><span class="e-name">code-explorer</span><span class="tag on">内置</span></div>
+            <div class="e-desc">只读代码检索：白名单 read/glob/grep，大范围搜索不污染主对话。</div>
+            <div class="e-foot"><span class="tag">tools: read·glob·grep</span><span class="tag">只读</span></div>
+          </div>
+          <div class="ext-card card">
+            <div class="e-head"><span class="e-name">code-reviewer</span><span class="tag on">内置</span></div>
+            <div class="e-desc">代码质量评审，写码后立即触发。分级 CRITICAL→LOW 输出。</div>
+            <div class="e-foot"><span class="tag">hooks: PostToolUse 关联</span></div>
+          </div>
+          <div class="ext-card card">
+            <div class="e-head"><span class="e-name">security-reviewer</span><span class="tag on">内置</span></div>
+            <div class="e-desc">OWASP 漏洞检测。触碰 auth/支付/用户数据代码时 STOP 并调用。</div>
+            <div class="e-foot"><span class="tag">rules: security.md 注入</span></div>
+          </div>
+          <div class="ext-card card" onclick="toast('agent 详情：systemPrompt / 工具白名单 / model 覆盖')">
+            <div class="e-head"><span class="e-name">planner</span><span class="tag on">内置</span></div>
+            <div class="e-desc">复杂 feature 的实现规划。自动激活条件：多文件改造、新功能。</div>
+            <div class="e-foot"><span class="tag">model: 可降级配置</span></div>
+          </div>
+          <div class="ext-card card" style="opacity:.6">
+            <div class="e-head"><span class="e-name">＋ 自定义 agent</span></div>
+            <div class="e-desc">项目级 .mcode/agents/ 或插件内 AgentDefinition 注册。</div>
+            <div class="e-foot"><span class="tag">加载顺序：内置 → 用户 → 项目</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MCP -->
+      <div class="section">
+        <h2>🔗 MCP Servers（/mcp）</h2>
+        <div class="sec-sub">MCP 工具自动转成 ToolDefinition 挂进 registry，与内置工具同一权限门控</div>
+        <div class="mcp-row card">
+          <span style="font-size:18px">🟢</span>
+          <div><div class="m-name">chrome-devtools</div><div class="m-meta">17 tools · connected · stdio</div></div>
+          <div class="spacer"></div>
+          <span class="tag on">已注入 17 个工具</span>
+          <button class="btn ghost" onclick="toast('重启 / 配置该 MCP server')">⋯</button>
+        </div>
+        <div class="mcp-row card">
+          <span style="font-size:18px">🟢</span>
+          <div><div class="m-name">web-search-prime</div><div class="m-meta">2 tools · connected</div></div>
+          <div class="spacer"></div>
+          <span class="tag on">已注入</span>
+          <button class="btn ghost" onclick="toast('⋯')">⋯</button>
+        </div>
+        <div class="mcp-row card">
+          <span style="font-size:18px">🔴</span>
+          <div><div class="m-name">context7</div><div class="m-meta">连接失败：ECONNREFUSED</div></div>
+          <div class="spacer"></div>
+          <button class="btn" onclick="toast('重连中…')">重连</button>
+        </div>
+      </div>
+
+      <!-- Hooks & Plugins -->
+      <div class="section">
+        <h2>🪝 Hooks &amp; 插件加载（/hooks）</h2>
+        <div class="sec-sub">生命周期钩子挂 harness lifecycle：PreToolUse / PostToolUse / Stop · 权限层统一门控</div>
+        <div class="panel" style="margin-bottom:14px">
+          <table class="tbl">
+            <tr><th>Hook</th><th>触发点</th><th>来源</th><th>状态</th></tr>
+            <tr><td class="mono">gateguard</td><td>PreToolUse</td><td><span class="tag src-u">~/.mcode</span></td><td style="color:var(--green)">运行中</td></tr>
+            <tr><td class="mono">auto-format</td><td>PostToolUse · Write|Edit</td><td><span class="tag">项目 .mcode</span></td><td style="color:var(--green)">运行中</td></tr>
+            <tr><td class="mono">final-verify</td><td>Stop</td><td><span class="tag on">ecc-core</span></td><td style="color:var(--text-3)">已停用</td></tr>
+          </table>
+        </div>
+        <div class="load-order">
+  插件加载与覆盖顺序（后加载者可覆盖前者）：<br>
+  ① <b>ecc-core</b>（内置 · 优先级最低：277 skills / 67 agents / 93 commands / hooks / rules）<br>
+  ② <b>~/.mcode</b>（用户级：commands / skills / plugins）<br>
+  ③ <b>.mcode</b>（项目级：可覆盖以上全部）<br>
+  同名注册按 <b>namespace:name</b> 去重，覆盖时在状态栏提示
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="../js/shared.js"></script>
+</body>
+</html>
