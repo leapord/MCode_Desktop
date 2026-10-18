@@ -189,11 +189,14 @@ pub struct DesktopConfig {
     pub mcp_servers: Vec<McpServerConfig>,
     /// hooks 生命周期配置
     pub hooks: Vec<HookConfig>,
+    /// 最近打开的工作区（桌面端启动选择器数据源，最近在前，上限 8）
+    #[serde(default)]
+    pub recent_workspaces: Vec<String>,
 }
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        Self { permission_rules: vec![], mcp_servers: vec![], hooks: vec![] }
+        Self { permission_rules: vec![], mcp_servers: vec![], hooks: vec![], recent_workspaces: vec![] }
     }
 }
 

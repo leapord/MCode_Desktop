@@ -8,6 +8,7 @@ mod session_ops;
 mod theme;
 mod text_input;
 mod views;
+mod workspace_picker;
 
 use app::App;
 use gpui::{

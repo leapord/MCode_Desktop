@@ -385,7 +385,8 @@ impl App {
         self.cfg.save().ok();
         self.rebuild_harness(cx);
         if self.harness.is_some() {
-            self.view = View::Chat;
+            // 引导完成后进工作区选择器（IDEA 式首屏链路）
+            self.view = View::WorkspacePicker;
             self.push_notice(format!("✓ 供应商已配置：{}（模型 {}）", self.cfg.active_provider.clone().unwrap_or_default(), models[0]), false);
         }
         cx.notify();

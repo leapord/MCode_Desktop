@@ -47,20 +47,6 @@ pub(crate) struct FsRow {
 }
 
 impl App {
-    /// 预展开深度 ≤1 的目录（默认折叠到深度 2 的展示语义）
-    pub(crate) fn prefill_expanded(&mut self) {
-        self.expanded_dirs.insert(self.cwd.clone());
-        let Ok(entries) = std::fs::read_dir(&self.cwd) else { return };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir()
-                && !matches!(e.file_name().to_string_lossy().as_ref(), ".git" | "target" | "node_modules" | "dist" | ".mcode")
-            {
-                self.expanded_dirs.insert(p);
-            }
-        }
-    }
-
     /// 当前文件树可见行（懒加载：只读已展开目录，目录优先 + 字典序，上限 2000 行）
     pub(crate) fn fs_rows(&self) -> Vec<FsRow> {
         let mut rows = vec![];
@@ -76,10 +62,15 @@ impl App {
         let mut items: Vec<(String, PathBuf, bool)> = entries
             .flatten()
             .filter(|e| {
-                !matches!(
-                    e.file_name().to_string_lossy().as_ref(),
-                    ".git" | "target" | "node_modules" | "dist" | ".mcode"
-                )
+                let name = e.file_name().to_string_lossy().into_owned();
+                // 隐藏文件开关（默认关）：点开头条目整树过滤；target/node_modules/dist 恒过滤
+                if matches!(name.as_str(), "target" | "node_modules" | "dist") {
+                    return false;
+                }
+                if !self.show_hidden && name.starts_with('.') {
+                    return false;
+                }
+                true
             })
             .map(|e| {
                 let p = e.path();
@@ -251,7 +242,7 @@ impl App {
 
     /// 操作后刷新：补全 file_tree 重扫 + notify
     pub(crate) fn fs_refresh(&mut self) {
-        self.file_tree = scan_file_tree(&self.cwd);
+        self.file_tree = scan_file_tree(&self.cwd, self.show_hidden);
     }
 }
 
@@ -410,6 +401,24 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                     div().text_size(px(9.5)).text_color(BLUE).child(c)
                 }))
                 .child(div().flex_1())
+                .child(
+                    div()
+                        .id("btn-show-hidden")
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_sm()
+                        .text_size(px(10.5))
+                        .text_color(if app.show_hidden { ACCENT } else { TEXT_3 })
+                        .cursor_pointer()
+                        .hover(|s| s.bg(BG_HOVER))
+                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.show_hidden = !this.show_hidden;
+                            // @ 补全的 file_tree 同步尊重 show_hidden
+                            this.file_tree = crate::app::scan_file_tree(&this.cwd, this.show_hidden);
+                            cx.notify();
+                        }))
+                        .child(if app.show_hidden { "● 隐藏" } else { "◌ 隐藏" }),
+                )
                 .child(toolbar),
         )
         .child(

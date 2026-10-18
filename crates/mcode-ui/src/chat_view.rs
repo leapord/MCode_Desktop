@@ -21,6 +21,7 @@ pub(crate) fn render_app(app: &mut App, window: &mut Window, cx: &mut Context<Ap
         View::Extensions => crate::views::render_extensions(app, cx),
         View::Sessions => crate::views::render_sessions(app, cx),
         View::Chat => render_chat(app, window, cx),
+        View::WorkspacePicker => crate::workspace_picker::render_workspace_picker(app, cx),
     }
 }
 
@@ -218,6 +219,7 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                 .child(badge(model_label, TEXT_2))
                 .child(
                     div()
+                        .id("cwd-badge")
                         .px_2()
                         .py_0p5()
                         .rounded_full()
@@ -227,6 +229,12 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                         .font_family("Menlo")
                         .text_size(px(11.))
                         .text_color(TEXT_3)
+                        .cursor_pointer()
+                        .hover(|s| s.border_color(BORDER_STRONG))
+                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.view = View::WorkspacePicker;
+                            cx.notify();
+                        }))
                         .child(cwd_label),
                 )
                 .child(
@@ -541,21 +549,29 @@ fn perm_btn(
 }
 
 /// 侧栏折叠/展开小按钮（« / »）
-fn collapse_btn(cx: &mut Context<App>, expanded: bool) -> gpui::Stateful<gpui::Div> {
+/// 根因注记（用户实测「点击无响应」）：接线形态与可用的顶栏按钮完全同构，非 gpui 命中测试问题——
+/// gpui 0.2 on_click 语义 = mouse-down 与 mouse-up 都命中同一 hitbox（elements/div.rs
+/// paint_mouse_listeners 的 pending_mouse_down 配对，is_hovered 仅被后续 paint 的 BlockMouse
+/// hitbox 遮挡，本布局无遮挡）。真实根因是 handler 逻辑反转：旧实现
+/// `sidebar_collapsed = !expanded`，展开态调用 collapse_btn(cx, true) 恒置 false，
+/// 即点击 « 把状态写回原值，视觉零变化。改为直接赋目标值，并把命中区扩到 ≥24×24
+/// （原 px_1p5+py_0p5 命中区约 20×16，位移 1px 即不判 click，次要因素）。
+fn collapse_btn(cx: &mut Context<App>, collapse_to: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id("btn-collapse")
-        .px_1p5()
-        .py_0p5()
+        .min_w(px(24.))
+        .min_h(px(24.))
+        .p_1p5()
         .rounded_sm()
         .text_size(px(12.))
         .text_color(TEXT_3)
         .cursor_pointer()
         .hover(|s| s.bg(BG_HOVER))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.sidebar_collapsed = !expanded;
+            this.sidebar_collapsed = collapse_to;
             cx.notify();
         }))
-        .child(if expanded { "«" } else { "»" })
+        .child(if collapse_to { "«" } else { "»" })
 }
 
 /// 工具类别 → (图标, 语义色)

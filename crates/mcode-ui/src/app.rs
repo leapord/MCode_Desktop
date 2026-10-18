@@ -48,6 +48,8 @@ pub enum View {
     Extensions,
     Sessions,
     Onboarding,
+    /// 启动工作区选择器（IDEA 式首屏；顶栏 cwd 徽章点击可重新进入）
+    WorkspacePicker,
 }
 
 /// 消息流视图模型（对齐 prototype chat.html 的消息形态）
@@ -139,6 +141,10 @@ pub struct App {
     pub(crate) sidebar_collapsed: bool,
     /// 右侧文件浏览器可见
     pub(crate) explorer_visible: bool,
+    /// 浏览器/@ 补全是否显示点开头条目（默认 false）
+    pub(crate) show_hidden: bool,
+    /// 工作区选择器的路径输入框
+    pub ws_input: Entity<TextInput>,
     /// 文件树展开的目录（默认折叠到深度 2：cwd 本层与次层目录预展开）
     pub(crate) expanded_dirs: std::collections::HashSet<PathBuf>,
     /// 浏览器内选中项（复制/剪切/删除/引用的目标）
@@ -165,6 +171,7 @@ impl App {
         let ob_url = Self::make_input(cx, "https://open.bigmodel.cn/api/paas/v4");
         let ob_key = Self::make_input(cx, "API key 环境变量名，如 ZHIPU_API_KEY");
         let ob_models = Self::make_input(cx, "逗号分隔，如 glm-4.7-multimodal,glm-4.7-air");
+        let ws_input = Self::make_input(cx, "/绝对/路径（支持 ~ 展开）");
         let needs_onboarding = cfg.needs_onboarding();
         // 内置资产（ecc-core agents/skills + pua-core）一次性物化到 ~/.mcode/assets，
         // skills/skill 工具/task 内置 agent/PUA 指令的数据源
@@ -179,6 +186,7 @@ impl App {
             ob_url,
             ob_key,
             ob_models,
+            ws_input,
             rt: Arc::new(UiRuntime::new().expect("tokio runtime 创建失败")),
             harness: None,
             cfg: cfg.clone(),
@@ -193,7 +201,7 @@ impl App {
             pending_permission: None,
             sessions: vec![],
             session: None,
-            file_tree: scan_file_tree(&cwd),
+            file_tree: scan_file_tree(&cwd, false),
             cwd,
             goal: None,
             goal_rounds: 0,
@@ -202,18 +210,18 @@ impl App {
             view: if needs_onboarding {
                 View::Onboarding
             } else {
-                View::Chat
+                // 启动首屏：工作区选择器（IDEA 等同；选定后才落 cwd 构建 harness）
+                View::WorkspacePicker
             },
             sidebar_collapsed: false,
             explorer_visible: true,
+            show_hidden: false,
             expanded_dirs: Default::default(),
             fs_selected: None,
             fs_clipboard: None,
             fs_delete_armed: None,
             explorer_focus: cx.focus_handle(),
         };
-        // 文件树默认展开到深度 2（cwd 本层与次层目录预展开）
-        me.prefill_expanded();
         // 输入框事件 → 发送 / 补全状态机同步（对齐 prototype 的 useCompletion 链路）
         cx.subscribe(&me.input, |this, _, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
@@ -674,13 +682,19 @@ impl Render for App {
 
 // ---------- 文件树扫描（App 自己扫 cwd：深度 3，跳 .git/target/node_modules，上限 600） ----------
 
-pub(crate) fn scan_file_tree(cwd: &PathBuf) -> Vec<String> {
+pub(crate) fn scan_file_tree(cwd: &PathBuf, show_hidden: bool) -> Vec<String> {
     let mut out = vec![];
-    walk_dir(cwd, cwd, 0, &mut out);
+    walk_dir(cwd, cwd, 0, show_hidden, &mut out);
     out
 }
 
-fn walk_dir(base: &std::path::Path, dir: &std::path::Path, depth: usize, out: &mut Vec<String>) {
+fn walk_dir(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    depth: usize,
+    show_hidden: bool,
+    out: &mut Vec<String>,
+) {
     if depth >= 3 || out.len() >= 600 {
         return;
     }
@@ -690,13 +704,13 @@ fn walk_dir(base: &std::path::Path, dir: &std::path::Path, depth: usize, out: &m
             return;
         }
         let name = e.file_name().to_string_lossy().into_owned();
-        if matches!(name.as_str(), ".git" | "target" | "node_modules" | ".mcode") {
+        if matches!(name.as_str(), "target" | "node_modules") || (!show_hidden && name.starts_with('.')) {
             continue;
         }
         let p = e.path();
         if p.is_dir() {
             out.push(format!("{}/", e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()));
-            walk_dir(base, &p, depth + 1, out);
+            walk_dir(base, &p, depth + 1, show_hidden, out);
         } else if let Ok(rel) = p.strip_prefix(base) {
             out.push(rel.to_string_lossy().into_owned());
         }
