@@ -14,6 +14,7 @@ unicode-segmentation = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
+pulldown-cmark = { workspace = true }
 mcode-core = { path = "../mcode-core" }
 
 [dev-dependencies]

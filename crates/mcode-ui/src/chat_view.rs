@@ -10,11 +10,13 @@ use gpui::{
     div, prelude::*, px, rgb, AnyElement, Context, Div, Focusable, InteractiveElement,
     StatefulInteractiveElement, SharedString, Window,
 };
-use mcode_core::agent::CONTEXT_LIMIT_TOKENS;
 use mcode_core::permission::Decision;
 use mcode_core::agent::context::MAX_GOAL_ROUNDS;
 
-use crate::app::{trunc, App, ChatMsg, View};
+use crate::app::{App, View};
+use crate::msg::trunc;
+use crate::msg::ChatMsg;
+use crate::sidebar_view::{render_sidebar, render_sidebar_collapsed};
 use crate::theme::*;
 
 /// 渲染分发：Onboarding / Settings / Extensions / Sessions / Chat
@@ -215,6 +217,8 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
         .bg(BG_MAIN)
         .text_color(TEXT_1)
         .when_some(perm_overlay, |d, ov| d.child(ov))
+        .when_some(crate::file_explorer::render_context_menu(app, cx), |d, m| d.child(m))
+        .when_some(crate::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
         // 顶栏
         .child(
             div()
@@ -379,27 +383,19 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
 
 // ---------- 消息渲染 ----------
 
-/// 思考块可点击头部（💭 状态词 · 字符数 · ▾/▸，点击切换该块 expanded）
-fn thinking_head(
-    idx: usize,
-    label: SharedString,
-    cx: &mut Context<App>,
-) -> gpui::Stateful<gpui::Div> {
+/// 消息折叠头部行（💭/回复 · 行数 · ▾/▸，点击循环三态）
+fn fold_head(id: &'static str, label: SharedString, idx: usize, cx: &mut Context<App>) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(SharedString::from(format!("think-head-{idx}")))
+        .id(SharedString::from(format!("{id}-{idx}")))
         .flex()
         .items_center()
-        .px_2()
-        .py_1()
         .cursor_pointer()
         .hover(|s| s.bg(BG_HOVER))
         .text_size(px(11.5))
         .text_color(TEXT_3)
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            if let Some(ChatMsg::Thinking { expanded, .. }) = this.messages.get_mut(idx) {
-                *expanded = !*expanded;
-                cx.notify();
-            }
+            this.cycle_message_fold(idx);
+            cx.notify();
         }))
         .child(label)
 }
@@ -430,22 +426,44 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                     .text_color(BLUE)
                     .child(r.clone())
             })),
-        ChatMsg::Assistant { text } => div()
-            .mb_3()
-            .max_w(px(860.))
-            .text_color(TEXT_1)
-            .child(text.clone()),
-        ChatMsg::Thinking { text, expanded } => {
-            // 头部：💭 + 状态词（流式中“思考中…” / 完成“思考过程”）+ 字符数 + ▾/▸
+        ChatMsg::Assistant { text, fold } => {
+            let n_lines = text.lines().count();
+            let head: SharedString = match fold {
+                crate::msg::FoldState::Expanded => format!("▾ 回复 · {n_lines} 行").into(),
+                crate::msg::FoldState::Preview => format!("▸ 回复 · 前 10 行 / 共 {n_lines} 行").into(),
+                crate::msg::FoldState::Collapsed => format!("▸ 回复 · 共 {n_lines} 行").into(),
+            };
+            let body = match fold {
+                crate::msg::FoldState::Expanded => crate::markdown_view::render_markdown(text),
+                crate::msg::FoldState::Preview => {
+                    // 预览：前 10 行对应的 markdown（尾部提示在头部行）
+                    let head_part: String = text.lines().take(10).collect::<Vec<_>>().join("\n");
+                    crate::markdown_view::render_markdown(&head_part)
+                }
+                crate::msg::FoldState::Collapsed => {
+                    let first: SharedString = trunc(text.lines().next().unwrap_or(""), 80).into();
+                    div().text_color(TEXT_2).text_size(px(12.5)).child(first)
+                }
+            };
+            div()
+                .mb_3()
+                .max_w(px(860.))
+                .flex()
+                .flex_col()
+                .child(fold_head("reply-head", head, idx, cx).pl_1())
+                .child(body)
+        }
+        ChatMsg::Thinking { text, fold } => {
+            let count = text.chars().count();
+            let state_label = match fold {
+                crate::msg::FoldState::Expanded => "▾",
+                _ => "▸",
+            };
             let head: SharedString = format!(
-                "💭 {} · {} 字符 {}",
-                if is_last { "思考中…" } else { "思考过程" },
-                text.chars().count(),
-                if *expanded { "▾" } else { "▸" }
+                "💭 {} · {count} 字符 {state_label}",
+                if is_last { "思考中…" } else { "思考过程" }
             )
             .into();
-            // 30k 截断对齐 CLI
-            let display: SharedString = crate::app::trunc(text, 30_000).into();
             let base = div()
                 .mb_2()
                 .max_w(px(860.))
@@ -453,11 +471,11 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                 .border_1()
                 .border_color(BORDER)
                 .bg(BG_PANEL);
-            if *expanded {
-                base
+            match fold {
+                crate::msg::FoldState::Expanded => base
                     .flex()
                     .flex_col()
-                    .child(thinking_head(idx, head, cx))
+                    .child(fold_head("think-head", head, idx, cx))
                     .child(
                         // 展开态：限高 160px 滚动区，流式写入时 scroll_to_bottom 跟随
                         div()
@@ -473,10 +491,28 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                             .font_family("Menlo")
                             .text_size(px(10.5))
                             .text_color(TEXT_3)
-                            .child(display),
-                    )
-            } else {
-                base.child(thinking_head(idx, head, cx))
+                            .child(SharedString::from(trunc(text, 30_000))),
+                    ),
+                crate::msg::FoldState::Preview => base
+                    .flex()
+                    .flex_col()
+                    .child(fold_head("think-head", head, idx, cx))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("think-body-{idx}")))
+                            .mx_2()
+                            .mb_2()
+                            .max_h(px(80.))
+                            .overflow_y_scroll()
+                            .rounded_sm()
+                            .bg(BG_WINDOW)
+                            .p_2()
+                            .font_family("Menlo")
+                            .text_size(px(10.5))
+                            .text_color(TEXT_3)
+                            .child(SharedString::from(trunc(text, 3_000))),
+                    ),
+                crate::msg::FoldState::Collapsed => base.child(fold_head("think-head", head, idx, cx)),
             }
         }
         ChatMsg::ToolCard { name, args, summary, running, success } => {
@@ -613,32 +649,6 @@ fn perm_btn(
         .child(label.to_string())
 }
 
-/// 侧栏折叠/展开小按钮（« / »）
-/// 根因注记（用户实测「点击无响应」）：接线形态与可用的顶栏按钮完全同构，非 gpui 命中测试问题——
-/// gpui 0.2 on_click 语义 = mouse-down 与 mouse-up 都命中同一 hitbox（elements/div.rs
-/// paint_mouse_listeners 的 pending_mouse_down 配对，is_hovered 仅被后续 paint 的 BlockMouse
-/// hitbox 遮挡，本布局无遮挡）。真实根因是 handler 逻辑反转：旧实现
-/// `sidebar_collapsed = !expanded`，展开态调用 collapse_btn(cx, true) 恒置 false，
-/// 即点击 « 把状态写回原值，视觉零变化。改为直接赋目标值，并把命中区扩到 ≥24×24
-/// （原 px_1p5+py_0p5 命中区约 20×16，位移 1px 即不判 click，次要因素）。
-fn collapse_btn(cx: &mut Context<App>, collapse_to: bool) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id("btn-collapse")
-        .min_w(px(24.))
-        .min_h(px(24.))
-        .p_1p5()
-        .rounded_sm()
-        .text_size(px(12.))
-        .text_color(TEXT_3)
-        .cursor_pointer()
-        .hover(|s| s.bg(BG_HOVER))
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.sidebar_collapsed = collapse_to;
-            cx.notify();
-        }))
-        .child(if collapse_to { "«" } else { "»" })
-}
-
 /// 工具类别 → (图标, 语义色)
 pub(crate) fn tool_icon(name: &str) -> (&'static str, gpui::Rgba) {
     if name == "task" {
@@ -654,146 +664,4 @@ pub(crate) fn tool_icon(name: &str) -> (&'static str, gpui::Rgba) {
     } else {
         ("✏️", GREEN)
     }
-}
-
-fn ctx_k(n: usize) -> String {
-    format!("{}k", n / 1000)
-}
-
-// ---------- 左侧功能区（可折叠） ----------
-
-/// 展开态侧栏（原布局 + 头部折叠按钮）
-fn render_sidebar(app: &mut App, cx: &mut Context<App>) -> gpui::Div {
-    let ctx = app.ctx_tokens_display();
-    let pct = (ctx as f32 / CONTEXT_LIMIT_TOKENS as f32 * 100.).min(100.);
-    div()
-        .w(px(232.))
-        .flex_shrink_0()
-        .flex()
-        .flex_col()
-        .bg(BG_SIDE)
-        .border_r_1()
-        .border_color(BORDER)
-        .child(
-            div().px_3().pt_3().flex().items_center().gap_1().child(
-                div()
-                    .id("btn-new")
-                    .flex_1()
-                    .rounded_md()
-                    .bg(ACCENT)
-                    .py_1p5()
-                    .text_center()
-                    .text_size(px(12.5))
-                    .text_color(rgb(0xffffff))
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                        this.new_chat();
-                        cx.notify();
-                    }))
-                    .child("＋ 新建会话"),
-            )
-            .child(collapse_btn(cx, true)),
-        )
-        .child(
-            div().px_3().pt_3().pb_1().text_size(px(10.5)).text_color(TEXT_3).child("当前目录会话"),
-        )
-        .child(
-            div().px_2().flex().flex_col().children(app.sessions.iter().take(8).map(|m| {
-                let title: SharedString = trunc(&m.title, 16).into();
-                let meta: SharedString = format!("{}轮", m.turns).into();
-                let id = m.id.clone();
-                div()
-                    .id(SharedString::from(format!("sess-{}", m.id)))
-                    .px_2()
-                    .py_1p5()
-                    .rounded_sm()
-                    .text_size(px(12.))
-                    .text_color(TEXT_2)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(BG_HOVER))
-                    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                        this.resume_session(&id, cx);
-                    }))
-                    .flex()
-                    .child(title)
-                    .child(div().ml_auto().text_color(TEXT_3).text_size(px(10.5)).child(meta))
-            })),
-        )
-        .child(div().flex_1())
-        .child(
-            div().mx_3().mb_3().rounded_md().border_1().border_color(BORDER).bg(BG_PANEL).p_2()
-                .child(
-                    div().flex().justify_between().text_size(px(10.5)).text_color(TEXT_3)
-                        .child("上下文占用")
-                        .child(SharedString::from(format!("{}/160k", ctx_k(ctx)))),
-                )
-                .child(div().mt_1().h_1().rounded_full().bg(BG_ACTIVE).child(
-                    div().h_1().rounded_full().bg(ACCENT).w(gpui::relative(pct / 100.)),
-                ))
-                .child(div().mt_1().text_size(px(9.5)).text_color(TEXT_3)
-                    .child(SharedString::from(format!("{pct:.0}% · /context")))),
-        )
-}
-
-/// 折叠态侧栏：40px 图标条（新建会话 + 设置/扩展/会话 + 展开）
-fn render_sidebar_collapsed(_app: &mut App, cx: &mut Context<App>) -> gpui::Div {
-    let icon_btn = |id: &'static str, icon: &'static str| -> gpui::Stateful<gpui::Div> {
-        div()
-            .id(id)
-            .w_full()
-            .py_2()
-            .text_center()
-            .text_size(px(14.))
-            .text_color(TEXT_2)
-            .cursor_pointer()
-            .hover(|s| s.bg(BG_HOVER))
-            .child(icon.to_string())
-    };
-    div()
-        .w(px(40.))
-        .flex_shrink_0()
-        .flex()
-        .flex_col()
-        .items_center()
-        .bg(BG_SIDE)
-        .border_r_1()
-        .border_color(BORDER)
-        .py_2()
-        .gap_1()
-        .child(
-            icon_btn("c-new", "＋")
-                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    this.new_chat();
-                    cx.notify();
-                })),
-        )
-        .child(
-            icon_btn("c-sessions", "🗂")
-                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    this.view = View::Sessions;
-                    cx.notify();
-                })),
-        )
-        .child(
-            icon_btn("c-ext", "🧩")
-                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    this.view = View::Extensions;
-                    cx.notify();
-                })),
-        )
-        .child(
-            icon_btn("c-settings", "⚙")
-                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    this.view = View::Settings;
-                    cx.notify();
-                })),
-        )
-        .child(div().flex_1())
-        .child(
-            icon_btn("c-expand", "»")
-                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    this.sidebar_collapsed = false;
-                    cx.notify();
-                })),
-        )
 }

@@ -11,7 +11,9 @@ use gpui::{div, prelude::*, px, rgb, AnyElement, InteractiveElement, SharedStrin
 use mcode_core::config::DesktopConfig;
 use std::path::PathBuf;
 
-use crate::app::{scan_file_tree, trunc, App, View};
+use crate::app::{App, View};
+use crate::file_explorer::scan_file_tree;
+use crate::msg::trunc;
 use crate::theme::*;
 
 /// 读取最近工作区（desktop.json 为空时用历史会话目录做种子）
@@ -65,6 +67,8 @@ impl App {
         self.fs_selected = None;
         self.fs_delete_armed = None;
         self.fs_clipboard = None;
+        self.context_menu = None;
+        self.rename_state = None;
         self.expanded_dirs.clear();
         self.file_tree = scan_file_tree(&self.cwd, self.show_hidden);
         self.rebuild_harness(cx);

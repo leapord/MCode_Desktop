@@ -7,13 +7,14 @@
 //! 新建文件/目录 + 删除二次确认。所有路径经工作区校验，操作后刷新补全 file_tree。
 
 use gpui::{
-    actions, div, prelude::*, px, Context, InteractiveElement, StatefulInteractiveElement,
+    actions, div, prelude::*, px, rgb, Context, InteractiveElement, StatefulInteractiveElement,
     SharedString,
 };
 use mcode_core::tools::contain_to_workspace;
 use std::path::{Path, PathBuf};
 
-use crate::app::{scan_file_tree, trunc, App};
+use crate::app::App;
+use crate::msg::trunc;
 use crate::theme::*;
 
 actions!(
@@ -39,6 +40,20 @@ fn file_icon(name: &str, is_dir: bool, open: bool) -> &'static str {
         "txt" => "📃",
         _ => "📄",
     }
+}
+
+/// 右键上下文菜单状态（渲染为绝对定位浮层）
+pub(crate) struct CtxMenu {
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// 行内重命名弹窗（TextInput 预填当前名）
+pub(crate) struct RenameState {
+    pub path: PathBuf,
+    pub input: gpui::Entity<crate::text_input::TextInput>,
 }
 
 /// 文件树可见行（渲染用）
@@ -248,6 +263,69 @@ impl App {
     pub(crate) fn fs_refresh(&mut self) {
         self.file_tree = scan_file_tree(&self.cwd, self.show_hidden);
     }
+
+    // ---------- 重命名（右键菜单 → 行内弹窗） ----------
+
+    fn rename_input(&mut self, cx: &mut Context<App>, name: &str) -> gpui::Entity<crate::text_input::TextInput> {
+        cx.new(|cx| crate::text_input::TextInput {
+            focus_handle: cx.focus_handle(),
+            content: name.to_string().into(),
+            placeholder: "新名称".into(),
+            selected_range: name.len()..name.len(),
+            selection_reversed: false,
+            marked_range: None,
+            last_layout: None,
+            last_bounds: None,
+            is_selecting: false,
+        })
+    }
+
+    pub(crate) fn open_rename(&mut self, path: PathBuf, cx: &mut Context<App>) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let input = self.rename_input(cx, &name);
+        self.rename_state = Some(RenameState { path, input });
+    }
+
+    pub(crate) fn confirm_rename(&mut self, cx: &mut Context<App>) {
+        let Some(st) = self.rename_state.as_ref() else { return };
+        let target = st.path.clone();
+        let new_name = st.input.read(cx).text().trim().to_string();
+        self.rename_state = None;
+        self.fs_rename(&target, &new_name);
+    }
+
+    /// 重命名：std::fs::rename + 工作区校验 + 重名拒绝
+    pub(crate) fn fs_rename(&mut self, target: &Path, new_name: &str) {
+        let new_name = new_name.trim();
+        if new_name.is_empty() || new_name.contains('/') || new_name == "." || new_name == ".." {
+            self.push_notice("✗ 名称不能为空、包含 / 或为路径符号".to_string(), true);
+            return;
+        }
+        let Some(dir) = target.parent() else { return };
+        let dest = dir.join(new_name);
+        if dest.exists() {
+            self.push_notice(format!("✗ 名称已被占用：{new_name}"), true);
+            return;
+        }
+        if self.ws_ok(&dest).is_none() || self.ws_ok(target).is_none() {
+            self.push_notice("✗ 路径不在工作区内".to_string(), true);
+            return;
+        }
+        match std::fs::rename(target, &dest) {
+            Ok(_) => {
+                self.push_notice(format!("✓ 已重命名 → {new_name}"), false);
+                if self.fs_selected.as_ref() == Some(&target.to_path_buf()) {
+                    self.fs_selected = Some(dest);
+                }
+                self.expanded_dirs.retain(|d| d != target);
+            }
+            Err(e) => self.push_notice(format!("✗ 重命名失败：{e}"), true),
+        }
+        self.fs_refresh();
+    }
 }
 
 impl App {
@@ -335,6 +413,7 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
     // 文件树行
     let mut tree = div().flex().flex_col().children(rows.iter().map(|r| {
         let path = r.path.clone();
+        let rc_path = path.clone();
         let sel = selected.as_ref() == Some(&path);
         let depth_px = 8. + r.depth as f32 * 14.;
         div()
@@ -362,6 +441,19 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                 }
                 cx.notify();
             }))
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+                    // 右键 = 选中 + 弹上下文菜单（坐标用窗口系，渲染为绝对定位浮层）
+                    this.fs_selected = Some(rc_path.clone());
+                    this.fs_delete_armed = None;
+                    this.context_menu = Some(CtxMenu {
+                        path: rc_path.clone(),
+                        is_dir: rc_path.is_dir(),
+                        x: ev.position.x.to_f64() as f32,
+                        y: ev.position.y.to_f64() as f32,
+                    });
+                    this.explorer_focus.focus(window);
+                    cx.notify();
+                }))
             .child(div().child(file_icon(&r.name, r.is_dir, r.open)))
             .child(div().text_color(if sel { TEXT_1 } else { TEXT_2 }).child(r.name.clone()))
     }));
@@ -412,13 +504,14 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                         .py_0p5()
                         .rounded_sm()
                         .text_size(px(10.5))
+                        .tooltip(tooltip_view("切换隐藏文件显示"))
                         .text_color(if app.show_hidden { ACCENT } else { TEXT_3 })
                         .cursor_pointer()
                         .hover(|s| s.bg(BG_HOVER))
                         .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                             this.show_hidden = !this.show_hidden;
                             // @ 补全的 file_tree 同步尊重 show_hidden
-                            this.file_tree = crate::app::scan_file_tree(&this.cwd, this.show_hidden);
+                            this.file_tree = scan_file_tree(&this.cwd, this.show_hidden);
                             cx.notify();
                         }))
                         .child(if app.show_hidden { "● 隐藏" } else { "◌ 隐藏" }),
@@ -437,11 +530,34 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         )
 }
 
-/// 工具条小按钮
+/// hover 文字提示视图（gpui 0.2 tooltip API：InteractiveElement::tooltip 构建任意视图，
+/// 无内置 Tooltip 组件，自绘最小视图）
+struct TextTooltip(SharedString);
+
+impl gpui::Render for TextTooltip {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .rounded_sm()
+            .border_1()
+            .border_color(BORDER_STRONG)
+            .bg(BG_ACTIVE)
+            .px_2()
+            .py_1()
+            .text_size(px(11.))
+            .text_color(TEXT_1)
+            .child(self.0.clone())
+    }
+}
+
+fn tooltip_view(tip: &'static str) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> gpui::AnyView {
+    move |_, cx| cx.new(|_| TextTooltip(tip.into())).into()
+}
+
+/// 工具条小按钮（icon + hover 文字提示）
 fn fs_btn(
     id: &str,
     icon: &str,
-    _tip: &str,
+    tip: &'static str,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
     div()
@@ -453,6 +569,7 @@ fn fs_btn(
         .text_color(TEXT_2)
         .cursor_pointer()
         .hover(|s| s.bg(BG_HOVER))
+        .tooltip(tooltip_view(tip))
         .on_click(on_click)
         .child(icon.to_string())
 }
@@ -463,5 +580,217 @@ fn armed_label(armed: &Option<PathBuf>) -> String {
         "确认?".to_string()
     } else {
         "🗑".to_string()
+    }
+}
+
+// ---------- 右键菜单 / 重命名弹窗渲染 ----------
+
+/// 右键菜单浮层（全屏遮罩捕获点击关闭 + 绝对定位菜单面板）
+pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
+    let menu = app.context_menu.as_ref()?;
+    let is_dir = menu.is_dir;
+    let path = menu.path.clone();
+    let x = px(menu.x.min(1020.));
+    let y = px(menu.y.min(700.));
+
+    let menu_panel = div()
+        .absolute()
+        .left(x)
+        .top(y)
+        .w(px(158.))
+        .rounded_md()
+        .border_1()
+        .border_color(BORDER_STRONG)
+        .bg(BG_PANEL)
+        .py_1()
+        .flex()
+        .flex_col()
+        .shadow_lg()
+        .child(menu_item("✏️ 重命名", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            let p = path.clone();
+            this.open_rename(p, cx);
+            this.context_menu = None;
+            cx.notify();
+        })))
+        .child(menu_item("🗑 删除（二次确认）", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.fs_delete();
+            this.context_menu = None;
+            cx.notify();
+        })))
+        .child(menu_item("⧉ 复制", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.fs_copy_entry(false);
+            this.context_menu = None;
+            cx.notify();
+        })))
+        .child(menu_item("✂ 剪切", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.fs_copy_entry(true);
+            this.context_menu = None;
+            cx.notify();
+        })));
+
+    let menu_panel = if is_dir {
+        menu_panel
+            .child(menu_item("📋 粘贴到此处", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                this.fs_paste();
+                this.context_menu = None;
+                cx.notify();
+            })))
+            .child(menu_item("＋ 新建文件", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                this.fs_new(false);
+                this.context_menu = None;
+                cx.notify();
+            })))
+            .child(menu_item("＋ 新建目录", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                this.fs_new(true);
+                this.context_menu = None;
+                cx.notify();
+            })))
+    } else {
+        menu_panel
+    };
+
+    let overlay = div()
+        .absolute()
+        .inset_0()
+        .top_0()
+        .left_0()
+        .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+            this.context_menu = None;
+            cx.notify();
+        }))
+        .child(menu_panel);
+
+    Some(overlay.into_any_element())
+}
+
+/// 重命名弹窗（居中小卡：TextInput 预填 + 确认/取消）
+pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
+    let input = app.rename_state.as_ref()?.input.clone();
+    let overlay = div()
+        .absolute()
+        .inset_0()
+        .top_0()
+        .left_0()
+        .bg(gpui::hsla(0., 0., 0., 0.5))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .w(px(360.))
+                .rounded_xl()
+                .border_1()
+                .border_color(BORDER_STRONG)
+                .bg(BG_PANEL)
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(div().text_size(px(13.)).child("✏️ 重命名"))
+                .child(
+                    div()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(BORDER_STRONG)
+                        .bg(rgb(0x222228))
+                        .overflow_hidden()
+                        .child(input),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("btn-rename-cancel")
+                                .px_3()
+                                .py_1p5()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(BORDER_STRONG)
+                                .text_size(px(12.))
+                                .text_color(TEXT_2)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(BG_HOVER))
+                                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.rename_state = None;
+                                    cx.notify();
+                                }))
+                                .child("取消"),
+                        )
+                        .child(
+                            div()
+                                .id("btn-rename-confirm")
+                                .px_3()
+                                .py_1p5()
+                                .rounded_md()
+                                .bg(ACCENT)
+                                .text_size(px(12.))
+                                .text_color(rgb(0xffffff))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(BG_HOVER))
+                                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.confirm_rename(cx);
+                                    cx.notify();
+                                }))
+                                .child("确认"),
+                        ),
+                ),
+        );
+    Some(overlay.into_any_element())
+}
+
+/// 菜单项（悬停高亮）
+fn menu_item(
+    label: &str,
+    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(format!("menu-{}", label)))
+        .px_3()
+        .py_1p5()
+        .text_size(px(12.))
+        .text_color(TEXT_1)
+        .cursor_pointer()
+        .hover(|s| s.bg(BG_HOVER))
+        .on_click(on_click)
+        .child(label.to_string())
+}
+
+// ---------- 文件树扫描（App 扫 cwd：深度 3，跳重目录，上限 600；@ 补全 respect show_hidden） ----------
+
+pub(crate) fn scan_file_tree(cwd: &PathBuf, show_hidden: bool) -> Vec<String> {
+    let mut out = vec![];
+    walk_dir(cwd, cwd, 0, show_hidden, &mut out);
+    out
+}
+
+fn walk_dir(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    depth: usize,
+    show_hidden: bool,
+    out: &mut Vec<String>,
+) {
+    if depth >= 3 || out.len() >= 600 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if out.len() >= 600 {
+            return;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if matches!(name.as_str(), "target" | "node_modules") || (!show_hidden && name.starts_with('.')) {
+            continue;
+        }
+        let p = e.path();
+        if p.is_dir() {
+            out.push(format!("{}/", e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()));
+            walk_dir(base, &p, depth + 1, show_hidden, out);
+        } else if let Ok(rel) = p.strip_prefix(base) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
     }
 }

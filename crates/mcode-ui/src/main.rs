@@ -7,10 +7,13 @@
 mod app;
 #[cfg(test)]
 mod interaction_tests;
+mod markdown_view;
+mod msg;
 mod chat_view;
 mod file_explorer;
 mod runtime;
 mod session_ops;
+mod sidebar_view;
 mod theme;
 mod text_input;
 mod views;

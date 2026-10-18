@@ -11,7 +11,8 @@ use gpui::{
 };
 use mcode_core::permission::Mode;
 
-use crate::app::{trunc, App, View};
+use crate::app::{App, View};
+use crate::msg::trunc;
 use crate::chat_view::badge;
 use crate::session_ops::{lang_label, lang_next};
 use crate::theme::*;
@@ -328,7 +329,7 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
             .and_then(|h| h.mcp_report.iter().find(|(n, _)| n == &cfg.name));
         let (dot, state): (&'static str, SharedString) = match report {
             Some((_, Ok(n))) => ("🟢", format!("connected · 已注入 {n} 个工具").into()),
-            Some((_, Err(e))) => ("🔴", format!("连接失败：{}", crate::app::trunc(&format!("{e:#}"), 60)).into()),
+            Some((_, Err(e))) => ("🔴", format!("连接失败：{}", trunc(&format!("{e:#}"), 60)).into()),
             None => ("⚪", "已停用".into()),
         };
         let name: SharedString = cfg.name.clone().into();
@@ -372,7 +373,7 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                 div().flex().flex_col().gap_1().children(desktop.hooks.iter().map(|h| {
                     let event: SharedString = format!("{:?}", h.event).into();
                     let matcher: SharedString = h.matcher.clone().into();
-                    let command: SharedString = crate::app::trunc(&h.command, 60).into();
+                    let command: SharedString = trunc(&h.command, 60).into();
                     div()
                         .flex()
                         .items_center()
@@ -420,7 +421,7 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
     }
     root = root.children(app.sessions.iter().map(|m| {
         let title: SharedString = trunc(&m.title, 40).into();
-        let meta: SharedString = format!("{}轮 · {} tokens · {}", m.turns, m.tokens_total, crate::app::trunc(&m.updated, 10)).into();
+        let meta: SharedString = format!("{}轮 · {} tokens · {}", m.turns, m.tokens_total, trunc(&m.updated, 10)).into();
         let id = m.id.clone();
         div()
             .id(SharedString::from(format!("page-sess-{}", m.id)))

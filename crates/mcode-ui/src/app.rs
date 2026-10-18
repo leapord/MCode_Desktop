@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::msg::{default_fold_for, trunc, ChatMsg, DiffLine, FoldState, PendingPermission};
 use crate::runtime::{event_sink, Harness, UiEvent, UiRuntime};
 use crate::session_ops::current_effort;
 use crate::text_input::{InputEvent, TextInput};
@@ -55,56 +56,6 @@ pub enum View {
     Onboarding,
     /// 启动工作区选择器（IDEA 式首屏；顶栏 cwd 徽章点击可重新进入）
     WorkspacePicker,
-}
-
-/// 消息流视图模型（对齐 prototype chat.html 的消息形态）
-#[derive(Clone, Debug)]
-pub enum ChatMsg {
-    User {
-        text: SharedString,
-        refs: Vec<SharedString>,
-    },
-    Assistant {
-        text: SharedString,
-    },
-    /// 思考过程（连续 Reasoning 增量合并；每块独立展开/折叠状态）
-    Thinking {
-        text: SharedString,
-        expanded: bool,
-    },
-    /// 工具调用卡片（MCP 工具名为运行时字符串，name 不用 &'static str）
-    ToolCard {
-        name: SharedString,
-        args: SharedString,
-        summary: SharedString,
-        running: bool,
-        success: bool,
-    },
-    Diff {
-        path: SharedString,
-        lines: Vec<DiffLine>,
-    },
-    Notice {
-        text: SharedString,
-        error: bool,
-    },
-    /// 回合运行占位（finish_run 时移除）
-    Running,
-}
-
-#[derive(Clone, Debug)]
-pub struct DiffLine {
-    pub add: bool,
-    pub del: bool,
-    pub hunk: bool,
-    pub text: SharedString,
-}
-
-/// 权限确认弹窗的待裁决请求（respond oneshot 回传 runner）
-pub struct PendingPermission {
-    pub tool: String,
-    pub args_summary: String,
-    pub respond: Option<tokio::sync::oneshot::Sender<Decision>>,
 }
 
 /// App — UI 侧状态 + 内核接线。回合一启动就持 hist 锁推进，UI 线程只 try_lock 只读。
@@ -165,18 +116,16 @@ pub struct App {
     pub(crate) fs_delete_armed: Option<std::path::PathBuf>,
     /// 文件浏览器键上下文的焦点句柄（cmd-c/x/v 拦截）
     pub explorer_focus: gpui::FocusHandle,
+    /// 右键上下文菜单（渲染为绝对定位浮层）
+    pub(crate) context_menu: Option<crate::file_explorer::CtxMenu>,
+    /// 行内重命名弹窗（预填当前名 + 确认/取消）
+    pub(crate) rename_state: Option<crate::file_explorer::RenameState>,
 }
-
 /// 回合任务获取 hist 锁的等待上限（测试用 1s 加速锁超时用例）
 #[cfg(test)]
 const HIST_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 #[cfg(not(test))]
 const HIST_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// 截断显示文本
-pub(crate) fn trunc(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
-}
 
 impl App {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -228,7 +177,7 @@ impl App {
             pending_permission: None,
             sessions: vec![],
             session: None,
-            file_tree: scan_file_tree(&cwd, false),
+            file_tree: crate::file_explorer::scan_file_tree(&cwd, false),
             cwd,
             goal: None,
             goal_rounds: 0,
@@ -252,6 +201,8 @@ impl App {
             fs_clipboard: None,
             fs_delete_armed: None,
             explorer_focus: cx.focus_handle(),
+            context_menu: None,
+            rename_state: None,
         };
         // 输入框事件 → 发送 / 补全状态机同步（对齐 prototype 的 useCompletion 链路）
         cx.subscribe(&me.input, |this, _, event, cx| match event {
@@ -512,12 +463,14 @@ impl App {
             AgentEvent::TextDelta(t) => {
                 if let Some(last) = self.messages.last_mut() {
                     match last {
-                        ChatMsg::Running => *last = ChatMsg::Assistant { text: t.into() },
-                        ChatMsg::Assistant { text } => *text = format!("{text}{t}").into(),
-                        _ => self.messages.push(ChatMsg::Assistant { text: t.into() }),
+                        ChatMsg::Running => {
+                            *last = ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded };
+                        }
+                        ChatMsg::Assistant { text, .. } => *text = format!("{text}{t}").into(),
+                        _ => self.messages.push(ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded }),
                     }
                 } else {
-                    self.messages.push(ChatMsg::Assistant { text: t.into() });
+                    self.messages.push(ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded });
                 }
             }
             // 思考增量：连续 Reasoning 合并进最后一个 Thinking 块（保留其展开状态）；
@@ -528,10 +481,11 @@ impl App {
                 } else {
                     self.messages.push(ChatMsg::Thinking {
                         text: text.into(),
-                        expanded: self.thinking_default_expanded,
+                        fold: if self.thinking_default_expanded { FoldState::Expanded } else { FoldState::Collapsed },
                     });
                 }
-                if self.thinking_default_expanded {
+                // 流式贴底仅在展开态跟随（用户切走折叠后不打扰滚动位置）
+                if self.messages.last().is_some_and(|m| matches!(m, ChatMsg::Thinking { fold: FoldState::Expanded, .. })) {
                     self.thinking_scroll.scroll_to_bottom();
                 }
                 cx.notify();
@@ -624,7 +578,14 @@ impl App {
                     return;
                 }
                 if !reply.is_empty() && !matches!(self.messages.last(), Some(ChatMsg::Assistant { .. })) {
-                    self.messages.push(ChatMsg::Assistant { text: reply.clone().into() });
+                    self.messages.push(ChatMsg::Assistant {
+                        text: reply.clone().into(),
+                        fold: default_fold_for(&reply),
+                    });
+                }
+                // 流式文本最终定型的默认折叠（30 行规则）；用户点击后 Done 紧随其到的场景极少
+                if let Some(ChatMsg::Assistant { fold, .. }) = self.messages.last_mut() {
+                    *fold = default_fold_for(&reply);
                 }
                 if !reply.is_empty() {
                     if let Some(s) = self.session.as_mut() {
@@ -677,6 +638,14 @@ impl App {
 
     /// ESC：关补全 → 拒绝待裁决权限 → 打断回合 → 返回 Chat 视图
     pub(crate) fn interrupt(&mut self, _cx: &mut Context<Self>) {
+        if self.rename_state.is_some() {
+            self.rename_state = None;
+            return;
+        }
+        if self.context_menu.is_some() {
+            self.context_menu = None;
+            return;
+        }
         if self.completion.is_open() {
             self.completion.close();
             return;
@@ -700,6 +669,16 @@ impl App {
         }
         if self.view != View::Chat {
             self.view = View::Chat;
+        }
+    }
+
+    /// 消息折叠三态循环（Assistant/Thinking 头部行点击）
+    pub(crate) fn cycle_message_fold(&mut self, idx: usize) {
+        match self.messages.get_mut(idx) {
+            Some(ChatMsg::Assistant { fold, .. } | ChatMsg::Thinking { fold, .. }) => {
+                *fold = fold.next();
+            }
+            _ => {}
         }
     }
 
@@ -753,42 +732,5 @@ impl Focusable for App {
 impl Render for App {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::chat_view::render_app(self, window, cx)
-    }
-}
-
-// ---------- 文件树扫描（App 自己扫 cwd：深度 3，跳 .git/target/node_modules，上限 600） ----------
-
-pub(crate) fn scan_file_tree(cwd: &PathBuf, show_hidden: bool) -> Vec<String> {
-    let mut out = vec![];
-    walk_dir(cwd, cwd, 0, show_hidden, &mut out);
-    out
-}
-
-fn walk_dir(
-    base: &std::path::Path,
-    dir: &std::path::Path,
-    depth: usize,
-    show_hidden: bool,
-    out: &mut Vec<String>,
-) {
-    if depth >= 3 || out.len() >= 600 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for e in entries.flatten() {
-        if out.len() >= 600 {
-            return;
-        }
-        let name = e.file_name().to_string_lossy().into_owned();
-        if matches!(name.as_str(), "target" | "node_modules") || (!show_hidden && name.starts_with('.')) {
-            continue;
-        }
-        let p = e.path();
-        if p.is_dir() {
-            out.push(format!("{}/", e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()));
-            walk_dir(base, &p, depth + 1, show_hidden, out);
-        } else if let Ok(rel) = p.strip_prefix(base) {
-            out.push(rel.to_string_lossy().into_owned());
-        }
     }
 }

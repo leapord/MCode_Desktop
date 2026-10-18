@@ -9,7 +9,8 @@ use mcode_core::config::Language;
 use mcode_core::util::mcode_dir;
 use mcode_core::{agent::history::HistoryStore, agent::Role, sessions::SessionStore};
 
-use crate::app::{ChatMsg, View};
+use crate::app::View;
+use crate::msg::{default_fold_for, trunc, ChatMsg};
 
 /// 语言循环顺序（设置视图 / /language 用）
 pub const LANGS: [Language; 5] = [
@@ -179,7 +180,7 @@ impl App {
                 let first = h
                     .all()
                     .first()
-                    .map(|m| crate::app::trunc(&m.text, 200))
+                    .map(|m| trunc(&m.text, 200))
                     .unwrap_or_default();
                 let summary = format!("手动压缩：{msgs} 条消息，首条：\"{first}\"");
                 h.compact(summary, keep);
@@ -333,7 +334,7 @@ impl App {
                         pending_user = Some(text);
                     }
                     Role::Assistant => {
-                        chat.push(ChatMsg::Assistant { text: text.clone().into() });
+                        chat.push(ChatMsg::Assistant { text: text.clone().into(), fold: default_fold_for(&text) });
                         if let Some(u) = pending_user.take() {
                             hist.push_turn(u, text);
                         }
@@ -344,7 +345,7 @@ impl App {
             for (name, input) in tool_uses {
                 chat.push(ChatMsg::ToolCard {
                     name: name.into(),
-                    args: crate::app::trunc(&input, 200).into(),
+                    args: trunc(&input, 200).into(),
                     summary: "".into(),
                     running: false,
                     success: true,
@@ -352,7 +353,7 @@ impl App {
             }
             for (output, success) in tool_results {
                 chat.push(ChatMsg::Notice {
-                    text: crate::app::trunc(&output, 400).into(),
+                    text: trunc(&output, 400).into(),
                     error: !success,
                 });
             }
@@ -438,8 +439,8 @@ impl App {
         for m in &self.messages {
             match m {
                 ChatMsg::User { text, .. } => md.push_str(&format!("## 用户\n\n{text}\n\n")),
-                ChatMsg::Assistant { text } => md.push_str(&format!("## MCode\n\n{text}\n\n")),
-                ChatMsg::Thinking { text, .. } => md.push_str(&format!("> 💭 {}\n\n", crate::app::trunc(text, 200))),
+                ChatMsg::Assistant { text, .. } => md.push_str(&format!("## MCode\n\n{text}\n\n")),
+                ChatMsg::Thinking { text, .. } => md.push_str(&format!("> 💭 {}\n\n", trunc(text, 200))),
                 ChatMsg::ToolCard { name, args, summary, .. } => {
                     md.push_str(&format!("- 🔧 {name} `{args}` {summary}\n"))
                 }
