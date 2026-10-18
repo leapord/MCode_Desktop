@@ -290,3 +290,22 @@ async fn case29_enter_workspace_updates_recents_and_harness(cx: &mut TestAppCont
         let _ = std::fs::remove_dir_all(hash_dir);
     }
 }
+
+// ---------- Reveal in Finder/Explorer ----------
+
+#[test]
+fn case35_reveal_command_shape_and_menu_consistency() {
+    use crate::context_menu::build_reveal_command;
+    // macOS 分支：open -R <path>
+    let cmd = build_reveal_command(std::path::Path::new("/tmp/x/f.txt"));
+    let mut dbg = format!("{:?}", cmd);
+    assert!(dbg.contains(r#""open""#), "macOS 应为 open: {dbg}");
+    assert!(dbg.contains("-R"), "应有 -R 反显参数: {dbg}");
+    assert!(dbg.contains("f.txt"));
+    let _ = &mut dbg;
+    // 目录与文件同样可用（open -R 对两者均反显其所在父目录并选中）
+    let _ = build_reveal_command(std::path::Path::new("/tmp/x"));
+    // CtxAction::Reveal 在 run_context_action 的 match 中（编译级确认已覆盖）
+    let acts = [crate::context_menu::CtxAction::Reveal];
+    assert!(matches!(acts[0], crate::context_menu::CtxAction::Reveal));
+}

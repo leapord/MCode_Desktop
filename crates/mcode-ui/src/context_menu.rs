@@ -21,6 +21,7 @@ pub(crate) struct CtxMenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CtxAction {
     Rename,
+    Reveal,
     Delete,
     Copy,
     Cut,
@@ -53,7 +54,7 @@ impl App {
         self.rename_state = None;
         let menu_w = 170.;
         let item_h = 30.;
-        let menu_h = if path.is_dir() { 7. * item_h + 12. } else { 4. * item_h + 12. };
+        let menu_h = if path.is_dir() { 8. * item_h + 12. } else { 5. * item_h + 12. };
         let margin = 8.;
         let mut mx = x;
         let mut my = y;
@@ -106,6 +107,13 @@ impl App {
                     true
                 }
             }
+            CtxAction::Reveal => {
+                let mut cmd = build_reveal_command(path);
+                if let Err(e) = cmd.spawn() {
+                    self.push_notice(format!("⚠ 无法打开文件管理器: {e}"), true);
+                }
+                true
+            }
             CtxAction::Copy => {
                 self.fs_copy_entry(false);
                 true
@@ -146,6 +154,11 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
 
     // 删除两段式：第一次点后本菜单内显示红色"确认删除？"
     let del_label = if menu.delete_armed { "🗑 确认删除？" } else { "🗑 删除" };
+    let reveal_label: &str = if cfg!(target_os = "windows") {
+        "🔎 在 Explorer 中显示"
+    } else {
+        "🔎 在 Finder 中显示"
+    };
 
     let menu_panel = div()
         .min_w(px(170.))
@@ -170,6 +183,7 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
         .child(action_item("✏️ 重命名", CtxAction::Rename, &path, cx))
         .child(action_item(del_label, CtxAction::Delete, &path, cx)
             .when(menu.delete_armed, |d| d.text_color(RED).font_weight(gpui::FontWeight::BOLD)))
+        .child(action_item(reveal_label, CtxAction::Reveal, &path, cx))
         .child(action_item("⧉ 复制", CtxAction::Copy, &path, cx))
         .child(action_item("✂ 剪切", CtxAction::Cut, &path, cx));
 
@@ -202,7 +216,7 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
 
 /// 菜单项（min_w 全宽 + 悬停高亮；点击统一走 run_context_action，返回是否关闭菜单）
 fn action_item(
-    label: &'static str,
+    label: &str,
     action: crate::context_menu::CtxAction,
     path: &Path,
     cx: &mut Context<App>,
@@ -228,3 +242,16 @@ fn action_item(
         .child(label.to_string())
 }
 
+
+/// 在系统文件管理器中定位条目：macOS `open -R`（Finder 反显），Windows `explorer /select,`
+pub(crate) fn build_reveal_command(path: &Path) -> std::process::Command {
+    if cfg!(target_os = "windows") {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", path.display()));
+        c
+    } else {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(path);
+        c
+    }
+}
