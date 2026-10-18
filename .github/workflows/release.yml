@@ -1,0 +1,38 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p mcode-ui
+      - run: |
+          mkdir -p bundle-out
+          cp target/release/MCode_Desktop.exe bundle-out/
+          cp assets/brand/icon.ico bundle-out/MCode_Desktop.ico
+          cp -r assets bundle-out/assets
+          Compress-Archive -Path bundle-out/* -DestinationPath MCode_Desktop-win64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MCode_Desktop-win64
+          path: MCode_Desktop-win64.zip
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install create-dmg --no-default-features || true
+      - run: ./scripts/build-macos.sh
+      - run: |
+          cd target/release/bundle
+          ditto -c -k --sequesterRsrc --keepParent MCode_Desktop.app MCode_Desktop-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MCode_Desktop-macos
+          path: target/release/bundle/MCode_Desktop-macos.zip
