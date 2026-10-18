@@ -304,8 +304,13 @@ impl EntityInputHandler for TextInput {
         _cx: &mut Context<Self>,
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
-        actual_range.replace(self.range_to_utf16(&range));
-        Some(self.content[range].to_string())
+        // 防御性：utf16 映射的 range 理论上总在 content 边界内，但布局落后窗口期
+        // 仍可能越界——切片改 get()，越界返回 None 而非 panic
+        let text = self.content.get(range.clone()).map(|s| s.to_string());
+        if text.is_some() {
+            actual_range.replace(self.range_to_utf16(&range));
+        }
+        text
     }
 
     fn selected_text_range(
@@ -420,7 +425,12 @@ impl EntityInputHandler for TextInput {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
 
-        assert_eq!(last_layout.text, self.content);
+        // 布局可能落后于 content（内容变更与重绘之间的窗口期，IME/点击查询会进来）。
+        // 此前 assert_eq! 在不相等时 panic → extern "C" 上下文直接 abort（实测崩溃报告
+        // characterIndexForPoint 帧路径）。不相等时放弃定位，返回 None 让系统重试。
+        if last_layout.text != self.content {
+            return None;
+        }
         let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
         Some(self.offset_to_utf16(utf8_index))
     }
