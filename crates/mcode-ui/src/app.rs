@@ -134,6 +134,21 @@ pub struct App {
     /// 上次估算的上下文 token（回合运行中 hist 锁被回合任务持有，渲染用缓存）
     pub(crate) ctx_tokens: usize,
     pub view: View,
+    // -- 工作区文件浏览器 / 布局 --
+    /// 左侧功能区折叠（40px 图标条）
+    pub(crate) sidebar_collapsed: bool,
+    /// 右侧文件浏览器可见
+    pub(crate) explorer_visible: bool,
+    /// 文件树展开的目录（默认折叠到深度 2：cwd 本层与次层目录预展开）
+    pub(crate) expanded_dirs: std::collections::HashSet<PathBuf>,
+    /// 浏览器内选中项（复制/剪切/删除/引用的目标）
+    pub(crate) fs_selected: Option<std::path::PathBuf>,
+    /// 文件剪贴板 (path, is_cut)
+    pub(crate) fs_clipboard: Option<(std::path::PathBuf, bool)>,
+    /// 删除二次确认（第一次点击武装，同一路径再点一次执行）
+    pub(crate) fs_delete_armed: Option<std::path::PathBuf>,
+    /// 文件浏览器键上下文的焦点句柄（cmd-c/x/v 拦截）
+    pub explorer_focus: gpui::FocusHandle,
 }
 
 /// 截断显示文本
@@ -151,7 +166,6 @@ impl App {
         let ob_key = Self::make_input(cx, "API key 环境变量名，如 ZHIPU_API_KEY");
         let ob_models = Self::make_input(cx, "逗号分隔，如 glm-4.7-multimodal,glm-4.7-air");
         let needs_onboarding = cfg.needs_onboarding();
-        let input_sub = input.clone();
         let mut me = Self {
             focus_handle: cx.focus_handle(),
             input,
@@ -184,9 +198,18 @@ impl App {
             } else {
                 View::Chat
             },
+            sidebar_collapsed: false,
+            explorer_visible: true,
+            expanded_dirs: Default::default(),
+            fs_selected: None,
+            fs_clipboard: None,
+            fs_delete_armed: None,
+            explorer_focus: cx.focus_handle(),
         };
+        // 文件树默认展开到深度 2（cwd 本层与次层目录预展开）
+        me.prefill_expanded();
         // 输入框事件 → 发送 / 补全状态机同步（对齐 prototype 的 useCompletion 链路）
-        cx.subscribe(&input_sub, |this, _, event, cx| match event {
+        cx.subscribe(&me.input, |this, _, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
             InputEvent::Changed(text) => this.sync_completion(text),
         })
@@ -645,7 +668,7 @@ impl Render for App {
 
 // ---------- 文件树扫描（App 自己扫 cwd：深度 3，跳 .git/target/node_modules，上限 600） ----------
 
-fn scan_file_tree(cwd: &PathBuf) -> Vec<String> {
+pub(crate) fn scan_file_tree(cwd: &PathBuf) -> Vec<String> {
     let mut out = vec![];
     walk_dir(cwd, cwd, 0, &mut out);
     out

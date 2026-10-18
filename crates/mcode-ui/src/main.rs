@@ -2,6 +2,7 @@
 
 mod app;
 mod chat_view;
+mod file_explorer;
 mod runtime;
 mod session_ops;
 mod theme;
@@ -43,6 +44,15 @@ fn main() {
             KeyBinding::new("cmd-,", app::OpenSettings, None),
             KeyBinding::new("cmd-e", app::OpenExtensions, None),
             KeyBinding::new("cmd-j", app::OpenSessions, None),
+            // 文件浏览器键上下文（焦点在浏览器时优先于全局绑定）
+            KeyBinding::new("cmd-c", file_explorer::FsCopy, Some("FileExplorer")),
+            KeyBinding::new("cmd-x", file_explorer::FsCut, Some("FileExplorer")),
+            KeyBinding::new("cmd-v", file_explorer::FsPaste, Some("FileExplorer")),
+            KeyBinding::new("cmd-backspace", file_explorer::FsDelete, Some("FileExplorer")),
+            KeyBinding::new("up", file_explorer::FsSelUp, Some("FileExplorer")),
+            KeyBinding::new("down", file_explorer::FsSelDown, Some("FileExplorer")),
+            KeyBinding::new("right", file_explorer::FsToggleDir, Some("FileExplorer")),
+            KeyBinding::new("cmd-n", file_explorer::FsNewFile, Some("FileExplorer")),
             KeyBinding::new("cmd-q", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());

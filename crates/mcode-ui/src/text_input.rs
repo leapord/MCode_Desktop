@@ -348,6 +348,8 @@ impl EntityInputHandler for TextInput {
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
+        // 键盘输入必经路径：同步补全状态机（/ 与 @ 触发）
+        cx.emit(InputEvent::Changed(self.content.to_string()));
         cx.notify();
     }
 
@@ -375,10 +377,12 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
+        .map(|range_utf16| self.range_from_utf16(range_utf16))
             .map(|new_range| new_range.start + range.start..new_range.end + range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
+        // 键盘输入必经路径：同步补全状态机（/ 与 @ 触发）
+        cx.emit(InputEvent::Changed(self.content.to_string()));
         cx.notify();
     }
 
