@@ -1,3 +1,6 @@
 /target
 .DS_Store
 *.log
+
+# 本地截图（用户验收用，不入库）
+Snipaste_*.png
