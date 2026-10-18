@@ -79,6 +79,8 @@ pub struct TurnOpts<'a> {
     pub tools_filter: Option<Vec<String>>,
     /// 仅首轮附带的图片附件
     pub attachments: Vec<Attachment>,
+    /// 思考深度（/effort；随调用链透传给后端组请求体）
+    pub effort: crate::config::ThinkingEffort,
     pub history: &'a mut HistoryStore,
     pub emit: EventSink,
 }
@@ -156,7 +158,7 @@ pub async fn run_agent_turn(deps: &Arc<AgentDeps>, user_input: &str, opts: TurnO
             let attachments = if turn_count == 0 { opts.attachments.clone() } else { vec![] };
             match deps
                 .backend
-                .stream_turn(&system, &opts.history.all(), &current_input, &attachments, &tools, &mut on_stream, cancel.clone())
+                .stream_turn(&system, &opts.history.all(), &current_input, &attachments, &tools, &opts.effort, &mut on_stream, cancel.clone())
                 .await
             {
                 Ok(t) => {
@@ -417,6 +419,7 @@ mod tests {
             _user_input: &str,
             _attachments: &[Attachment],
             _tools: &[crate::tools::ToolDefinition],
+            _effort: &crate::config::ThinkingEffort,
             _on_event: &mut (dyn FnMut(StreamEvent) + Send),
             _cancel: tokio::sync::watch::Receiver<bool>,
         ) -> Result<StreamTurn> {
@@ -498,6 +501,7 @@ mod tests {
                 goal: None,
                 tools_filter: None,
                 attachments: vec![],
+                effort: crate::config::ThinkingEffort::Default,
                 history: &mut HistoryStore::default(),
                 emit: ev_sink,
             },
@@ -534,6 +538,7 @@ mod tests {
                 goal: None,
                 tools_filter: None,
                 attachments: vec![],
+                effort: crate::config::ThinkingEffort::Default,
                 history: &mut HistoryStore::default(),
                 emit: ev,
             },
@@ -567,6 +572,7 @@ mod tests {
                 goal: None,
                 tools_filter: None,
                 attachments: vec![],
+                effort: crate::config::ThinkingEffort::Default,
                 history: &mut HistoryStore::default(),
                 emit: ev_sink,
             },
@@ -591,6 +597,7 @@ mod tests {
                 goal: None,
                 tools_filter: None,
                 attachments: vec![],
+                effort: crate::config::ThinkingEffort::Default,
                 history: &mut HistoryStore::default(),
                 emit: noop_sink(),
             },

@@ -15,3 +15,7 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 mcode-core = { path = "../mcode-core" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+async-trait = { workspace = true }

@@ -128,6 +128,7 @@ pub trait ModelBackend: Send + Sync {
         user_input: &str,
         attachments: &[Attachment],
         tools: &[crate::tools::ToolDefinition],
+        effort: &crate::config::ThinkingEffort,
         on_event: &mut (dyn FnMut(StreamEvent) + Send),
         cancel: tokio::sync::watch::Receiver<bool>,
     ) -> Result<StreamTurn>;

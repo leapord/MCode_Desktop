@@ -183,9 +183,56 @@ impl Config {
 
 // ---------- 桌面扩展配置（~/.mcode/desktop.json，CLI 不读取） ----------
 
+/// 思考深度（对标 Claude Code /effort；OpenAI Responses API reasoning.effort 语义）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingEffort {
+    /// 不发送 reasoning 参数（请求形态与 CLI 完全一致，兼容不支持 reasoning 的供应商）
+    #[default]
+    Default,
+    Low,
+    Medium,
+    High,
+}
+
+impl ThinkingEffort {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThinkingEffort::Default => "default",
+            ThinkingEffort::Low => "low",
+            ThinkingEffort::Medium => "medium",
+            ThinkingEffort::High => "high",
+        }
+    }
+
+    /// 解析 /effort 指令参数（大小写不敏感）
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "default" => Some(ThinkingEffort::Default),
+            "low" => Some(ThinkingEffort::Low),
+            "medium" => Some(ThinkingEffort::Medium),
+            "high" => Some(ThinkingEffort::High),
+            _ => None,
+        }
+    }
+
+    /// 请求体 reasoning.effort 值（Default → None，不发参数）
+    pub fn request_value(&self) -> Option<&'static str> {
+        match self {
+            ThinkingEffort::Default => None,
+            ThinkingEffort::Low => Some("low"),
+            ThinkingEffort::Medium => Some("medium"),
+            ThinkingEffort::High => Some("high"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DesktopConfig {
+    /// 思考深度（"default"/"low"/"medium"/"high"，desktop.json 持久化，CLI 无此概念）
+    #[serde(default)]
+    pub thinking_effort: String,
     /// 权限规则（allow/deny，/permissions 面板数据源）
     pub permission_rules: Vec<PermissionRule>,
     /// MCP server 进程配置（stdio transport）
@@ -199,7 +246,13 @@ pub struct DesktopConfig {
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        Self { permission_rules: vec![], mcp_servers: vec![], hooks: vec![], recent_workspaces: vec![] }
+        Self {
+            thinking_effort: String::new(),
+            permission_rules: vec![],
+            mcp_servers: vec![],
+            hooks: vec![],
+            recent_workspaces: vec![],
+        }
     }
 }
 
@@ -250,6 +303,11 @@ pub enum HookEvent {
 }
 
 impl DesktopConfig {
+    /// 解析后的思考深度（空串/非法值 → Default）
+    pub fn thinking_effort(&self) -> ThinkingEffort {
+        ThinkingEffort::parse(&self.thinking_effort).unwrap_or_default()
+    }
+
     pub fn load() -> Self {
         Self::load_from(&crate::util::desktop_config_path())
     }
@@ -333,6 +391,29 @@ mod tests {
         assert_eq!(p.base_url, "https://open.bigmodel.cn/api/v1");
         let out = serde_json::to_string(&p).unwrap();
         assert!(out.contains("\"baseURL\":\"https://"), "序列化必须产出 baseURL 键: {out}");
+    }
+
+    #[test]
+    fn desktop_config_thinking_effort_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("mcode-cfg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("desktop.json");
+        let mut d = DesktopConfig::default();
+        d.thinking_effort = "high".into();
+        d.recent_workspaces = vec!["/tmp/x".into()];
+        std::fs::write(&p, serde_json::to_string_pretty(&d).unwrap()).unwrap();
+        let loaded = DesktopConfig::load_from(&p);
+        assert_eq!(loaded.thinking_effort, "high");
+        assert_eq!(loaded.thinking_effort(), ThinkingEffort::High);
+        assert_eq!(loaded.recent_workspaces, vec!["/tmp/x".to_string()]);
+        // 旧版 desktop.json 无该字段 → Default（向后兼容）
+        std::fs::write(&p, r#"{"permissionRules":[]}"#).unwrap();
+        let loaded = DesktopConfig::load_from(&p);
+        assert_eq!(loaded.thinking_effort(), ThinkingEffort::Default);
+        // 非法值 → Default（fail-safe）
+        std::fs::write(&p, r#"{"thinkingEffort":"turbo"}"#).unwrap();
+        assert_eq!(DesktopConfig::load_from(&p).thinking_effort(), ThinkingEffort::Default);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -45,6 +45,7 @@ impl ModelBackend for ResponsesBackend {
         user_input: &str,
         attachments: &[Attachment],
         tools: &[crate::tools::ToolDefinition],
+        effort: &crate::config::ThinkingEffort,
         on_event: &mut (dyn FnMut(StreamEvent) + Send),
         cancel: tokio::sync::watch::Receiver<bool>,
     ) -> Result<StreamTurn> {
@@ -77,13 +78,7 @@ impl ModelBackend for ResponsesBackend {
             })
             .collect();
 
-        let body = json!({
-            "model": self.model,
-            "instructions": system,
-            "input": input,
-            "tools": tools_json,
-            "stream": true,
-        });
+        let body = build_request_body(&self.model, system, &input, &tools_json, effort);
 
         let resp = self.client.post(self.url()).json(&body).send().await?;
         if !resp.status().is_success() {
@@ -93,14 +88,24 @@ impl ModelBackend for ResponsesBackend {
         }
 
         let mut stream = resp.bytes_stream();
+        let mut cancel = cancel;
         let mut buf = String::new();
         let mut turn = StreamTurn::default();
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            // cancel 竞争（修复"流停住时 ESC 无法打断"：旧实现只在两网络块之间检查
+            // cancel，stream.next().await 挂起即永远阻塞，hist 锁随之永不释放；
+            // select! 让 cancel.changed() 与下一个网络块竞争，cancel 触发立即返回 interrupted）
             if *cancel.borrow() {
                 turn.interrupted = true;
                 return Ok(turn);
             }
+            let next_chunk = tokio::select! {
+                // changed() 也可能由无害的复位信号触发，回到循环顶部按 borrow() 实际值判断
+                _ = cancel.changed() => continue,
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = next_chunk else { break };
             let chunk = chunk?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
             // SSE 按行取 data: 载荷（对齐 CLI parseSSE）
@@ -170,9 +175,68 @@ fn role_str(r: crate::agent::Role) -> &'static str {
     }
 }
 
+/// 组装 Responses API 请求体（独立成 fn 供测试：effort=Default 时不发 reasoning 键，
+/// 请求形态与 CLI 完全一致；effort≠Default 时加 "reasoning": {"effort": "<level>"}）
+fn build_request_body(
+    model: &str,
+    instructions: &str,
+    input: &[Value],
+    tools: &[Value],
+    effort: &crate::config::ThinkingEffort,
+) -> Value {
+    let mut body = json!({
+        "model": model,
+        "instructions": instructions,
+        "input": input,
+        "tools": tools,
+        "stream": true,
+    });
+    if let Some(level) = effort.request_value() {
+        body["reasoning"] = json!({ "effort": level });
+    }
+    body
+}
+
 fn truncate(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((i, _)) => s[..i].to_string(),
         None => s.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+
+    #[test]
+    fn default_effort_omits_reasoning_key() {
+        let body = build_request_body(
+            "m",
+            "sys",
+            &[json!({"role": "user", "content": []})],
+            &[],
+            &crate::config::ThinkingEffort::Default,
+        );
+        assert!(body.get("reasoning").is_none(), "Default 不应发送 reasoning");
+        assert_eq!(body["model"], "m");
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn high_effort_adds_reasoning_effort() {
+        let body = build_request_body(
+            "m",
+            "sys",
+            &[],
+            &[],
+            &crate::config::ThinkingEffort::High,
+        );
+        assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn effort_levels_map_to_request_values() {
+        assert_eq!(build_request_body("m", "s", &[], &[], &crate::config::ThinkingEffort::Low)["reasoning"]["effort"], "low");
+        assert_eq!(build_request_body("m", "s", &[], &[], &crate::config::ThinkingEffort::Medium)["reasoning"]["effort"], "medium");
     }
 }

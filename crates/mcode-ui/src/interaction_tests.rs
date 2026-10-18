@@ -1,0 +1,558 @@
+//! 交互场景测试矩阵（M2 全接线回归）— gpui TestAppContext（#[gpui::test]）无头驱动 App 状态机：
+//! 直接调 send()/on_ui_event()/interrupt()（按键级 IME 路径不在本矩阵范围），
+//! MockBackend 按调用序脚本化返回，事件经 take_rx 的 channel 由测试泵回 on_ui_event。
+
+use crate::app::{scan_file_tree, App, ChatMsg, View};
+use crate::runtime::{build_harness_with_backend, UiEvent};
+use gpui::{AppContext, Entity, TestAppContext};
+use mcode_core::agent::{ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall};
+use mcode_core::config::{Config, Provider};
+use mcode_core::permission::{Decision, Mode, Verdict};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tokio::sync::watch;
+
+// ---------- 脚本化 MockBackend ----------
+
+#[derive(Clone)]
+enum Step {
+    /// 正常一轮流式结果（reply 会以 TextDelta 发出）
+    Turn(StreamTurn),
+    /// 直接报错（文案避免触发 runner 的瞬时错误重试词表）
+    Fail(String),
+
+}
+
+struct ScriptMock {
+    steps: Vec<Step>,
+    calls: AtomicUsize,
+    /// 每次调用收到的 effort（用例 13 断言）
+    efforts: std::sync::Mutex<Vec<mcode_core::config::ThinkingEffort>>,
+}
+
+/// case03 专用：hang 开关由测试翻转（被打断的任务若尚未启动不会消耗脚本步骤，
+/// 按调用序的脚本会错位；开关式 mock 与任务启动时序解耦）。
+struct HangMock {
+    hang: std::sync::atomic::AtomicBool,
+    replies: std::sync::Mutex<Vec<StreamTurn>>,
+}
+
+impl HangMock {
+    fn new(replies: Vec<StreamTurn>) -> Self {
+        Self { hang: std::sync::atomic::AtomicBool::new(true), replies: std::sync::Mutex::new(replies) }
+    }
+
+    fn disarm(&self) {
+        self.hang.store(false, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelBackend for HangMock {
+    async fn stream_turn(
+        &self,
+        _system: &str,
+        _history: &[ApiMessage],
+        _user_input: &str,
+        _attachments: &[Attachment],
+        _tools: &[mcode_core::tools::ToolDefinition],
+        _effort: &mcode_core::config::ThinkingEffort,
+        on_event: &mut (dyn FnMut(StreamEvent) + Send),
+        cancel: watch::Receiver<bool>,
+    ) -> anyhow::Result<StreamTurn> {
+        if self.hang.load(Ordering::SeqCst) {
+            let mut c = cancel;
+            loop {
+                if *c.borrow() {
+                    return Ok(StreamTurn { interrupted: true, ..Default::default() });
+                }
+                let _ = c.changed().await;
+            }
+        }
+        let t = self.replies.lock().unwrap().pop().unwrap_or_default();
+        if !t.reply.is_empty() {
+            on_event(StreamEvent::TextDelta(t.reply.clone()));
+        }
+        Ok(t)
+    }
+}
+
+impl ScriptMock {
+    fn tool_call_turn(reply: &str) -> Step {
+        Step::Turn(StreamTurn {
+            reply: reply.into(),
+            tool_calls: vec![ToolCall {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                arguments: r#"{"command":"echo hi"}"#.into(),
+            }],
+            ..Default::default()
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelBackend for ScriptMock {
+    async fn stream_turn(
+        &self,
+        _system: &str,
+        _history: &[ApiMessage],
+        _user_input: &str,
+        _attachments: &[Attachment],
+        _tools: &[mcode_core::tools::ToolDefinition],
+        effort: &mcode_core::config::ThinkingEffort,
+        on_event: &mut (dyn FnMut(StreamEvent) + Send),
+        _cancel: watch::Receiver<bool>,
+    ) -> anyhow::Result<StreamTurn> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.efforts.lock().unwrap().push(*effort);
+        let step = self
+            .steps
+            .get(n)
+            .cloned()
+            .unwrap_or_else(|| Step::Turn(StreamTurn::default()));
+        match step {
+            Step::Turn(t) => {
+                if !t.reply.is_empty() {
+                    on_event(StreamEvent::TextDelta(t.reply.clone()));
+                }
+                Ok(t)
+            }
+            Step::Fail(msg) => Err(anyhow::anyhow!(msg)),
+        }
+    }
+}
+
+// ---------- 测试环境搭建 ----------
+
+fn test_config() -> Config {
+    Config {
+        pua_always_on: false,
+        language: Default::default(),
+        active_provider: Some("test".into()),
+        active_model: Some("test-model".into()),
+        providers: vec![Provider {
+            name: "test".into(),
+            base_url: "http://127.0.0.1:9/v1".into(),
+            // 非合法变量名 → 按明文 key 兜底，provider_ready 通过
+            api_key_env: "sk-literal-test".into(),
+            models: vec!["test-model".into()],
+            multimodal_models: vec![],
+        }],
+        default_mode: Mode::Passon,
+    }
+}
+
+static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+struct Ctx {
+    app: Entity<App>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<UiEvent>,
+    tmp: PathBuf,
+}
+
+impl Drop for Ctx {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.tmp);
+    }
+}
+
+fn turn(reply: &str) -> Step {
+    Step::Turn(StreamTurn { reply: reply.into(), ..Default::default() })
+}
+
+fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx {
+    let n = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
+    let tmp = std::env::temp_dir().join(format!("mcode-ui-test-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let app = cx.new(|cx| App::new_for_test(cx));
+    app.update(cx, |a, _cx| {
+        a.cfg = test_config();
+        a.cwd = tmp.clone();
+        a.file_tree = scan_file_tree(&a.cwd, a.show_hidden);
+        let h = build_harness_with_backend(&a.cfg, &a.cwd, &a.rt, backend).unwrap();
+        a.harness = Some(Arc::new(h));
+        a.refresh_sessions();
+    });
+    let rx = app.read_with(cx, |a, _| a.harness.as_ref().unwrap().take_rx().unwrap());
+    Ctx { app, rx, tmp }
+}
+
+fn setup(cx: &mut TestAppContext, steps: Vec<Step>) -> Ctx {
+    setup_backend(
+        cx,
+        Arc::new(ScriptMock {
+            steps,
+            calls: AtomicUsize::new(0),
+            efforts: std::sync::Mutex::new(vec![]),
+        }),
+    )
+}
+
+/// 泵事件：channel 里所有 UiEvent → on_ui_event，直到条件满足或超时
+fn wait(cx: &mut TestAppContext, ctx: &mut Ctx, cond: impl Fn(&App) -> bool, ms: u64) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        while let Ok(ev) = ctx.rx.try_recv() {
+            ctx.app.update(cx, |a, cx| a.on_ui_event(ev, cx));
+        }
+        if ctx.app.read_with(cx, |a, _| cond(a)) {
+            return true;
+        }
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+}
+
+fn is_notice(m: &ChatMsg, contains: &str) -> bool {
+    matches!(m, ChatMsg::Notice { text, .. } if text.contains(contains))
+}
+
+fn has_notice(a: &App, contains: &str) -> bool {
+    a.messages.iter().any(|m| is_notice(m, contains))
+}
+
+// ---------- 用例 1：普通输入 ----------
+#[gpui::test]
+async fn case01_plain_turn_streams_and_finishes(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![turn("你好，世界！")]);
+    c.app.update(cx, |a, cx| a.send("hello".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| !a.running
+            && matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text.contains("你好，世界")),
+        5_000),
+        "回合未完成: {:?}",
+        c.app.read_with(cx, |a, _| a.messages.clone())
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(matches!(&a.messages[0], ChatMsg::User { text, .. } if text == "hello"));
+        assert!(a.session.is_some(), "会话未落盘");
+        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+    });
+}
+
+// ---------- 用例 2：工具回合 ----------
+#[gpui::test]
+async fn case02_tool_turn_runs_and_feeds_back(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![ScriptMock::tool_call_turn(""), turn("done")]);
+    c.app.update(cx, |a, cx| a.send("run echo".into(), cx));
+    assert!(wait(cx, &mut c, |a| !a.running, 5_000), "工具回合未完成");
+    c.app.read_with(cx, |a, _| {
+        let card = a.messages.iter().find_map(|m| match m {
+            ChatMsg::ToolCard { name, running, success, summary, .. } => {
+                Some((name.clone(), *running, *success, summary.clone()))
+            }
+            _ => None,
+        });
+        let (name, running, success, summary) = card.expect("无 ToolCard");
+        assert_eq!(name, "bash");
+        assert!(!running, "工具卡未回填");
+        assert!(success, "工具失败");
+        assert!(summary.contains("hi"), "输出摘要缺失: {summary}");
+        assert!(matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text == "done"));
+        // bash 的 display Output → Notice（exit 0）
+        assert!(has_notice(a, "exit 0"), "bash Output display 未渲染为 Notice");
+    });
+}
+
+// ---------- 用例 3：打断后输入（本批 bug 回归） ----------
+#[gpui::test]
+async fn case03_interrupt_during_hang_then_recover(cx: &mut TestAppContext) {
+    let mock = Arc::new(HangMock::new(vec![StreamTurn { reply: "second-ok".into(), ..Default::default() }]));
+    let mut c = setup_backend(cx, mock.clone());
+    c.app.update(cx, |a, cx| a.send("first".into(), cx));
+    assert!(wait(cx, &mut c, |a| a.running, 5_000), "回合未启动");
+    c.app.update(cx, |a, cx| a.interrupt(cx));
+    // 预算放宽：全套件并行运行时 tokio 线程与真实 bash 进程竞争调度，
+    // 5s 在高负载机器上可能不够（实测 flaky）
+    assert!(
+        wait(cx, &mut c, |a| !a.running
+            && !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
+            20_000),
+        "ESC 后未收尾"
+    );
+    // 解除挂起（旧任务可能已在流中挂起、也可能尚未启动即被打断——两种时序都覆盖）
+    mock.disarm();
+    // 打断后的空回复不落 hist/会话；第二轮正常完成
+    c.app.update(cx, |a, cx| a.send("second".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| !a.running
+            && a.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { text } if text == "second-ok")),
+        5_000),
+        "打断后新回合未完成（回归失败）: messages={:?}",
+        c.app.read_with(cx, |a, _| a.messages.clone())
+    );
+}
+
+// ---------- 用例 4：运行中排队 ----------
+#[gpui::test]
+async fn case04_queue_drains_in_order(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![turn("r1"), turn("r2"), turn("r3")]);
+    c.app.update(cx, |a, cx| a.send("a".into(), cx));
+    c.app.update(cx, |a, cx| a.send("b".into(), cx));
+    c.app.update(cx, |a, cx| a.send("c".into(), cx));
+    c.app.read_with(cx, |a, _| {
+        assert_eq!(a.queue.len(), 2, "排队数不对");
+        assert!(a.running);
+    });
+    assert!(
+        wait(cx, &mut c, |a| !a.running && a.queue.is_empty(), 8_000),
+        "队列未出清"
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text == "r3"));
+        let users = a.messages.iter().filter(|m| matches!(m, ChatMsg::User { .. })).count();
+        assert_eq!(users, 3);
+    });
+}
+
+// ---------- 用例 5：错误恢复 ----------
+#[gpui::test]
+async fn case05_error_then_recover(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![Step::Fail("boom".into()), turn("ok-now")]);
+    c.app.update(cx, |a, cx| a.send("x".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| !a.running && has_notice(a, "boom"), 5_000),
+        "错误未收尾"
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+    });
+    c.app.update(cx, |a, cx| a.send("y".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text == "ok-now"),
+        5_000),
+        "错误后无法恢复"
+    );
+}
+
+// ---------- 用例 6：goal 循环 ----------
+#[gpui::test]
+async fn case06_goal_loop_reaches_completion(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![
+        turn("r1"),
+        turn("GOAL_CONTINUE"),
+        turn("r2"),
+        turn("GOAL_COMPLETE"),
+    ]);
+    c.app.update(cx, |a, _| {
+        a.goal = Some("ship it".into());
+    });
+    c.app.update(cx, |a, cx| a.send("start".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| a.goal.is_none() && !a.running, 10_000),
+        "goal 循环未收官: rounds={:?}",
+        c.app.read_with(cx, |a, _| (a.goal.clone(), a.goal_rounds))
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(has_notice(a, "goal 第 1 轮"), "缺续轮 Notice");
+        assert!(has_notice(a, "goal 已达成"), "缺达成 Notice");
+        assert!(
+            a.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { text } if text == "r2")),
+            "第二轮回复缺失: {:?}",
+            a.messages
+        );
+        assert!(matches!(a.messages.last(), Some(ChatMsg::Notice { .. })), "收官后末尾应是 Notice");
+    });
+}
+
+// ---------- 用例 7：goal 上限 ----------
+#[gpui::test]
+async fn case07_goal_rounds_cap_terminates(cx: &mut TestAppContext) {
+    // 13 轮 × (回合 + 裁判) 交替；第 13 次裁判结果到达时 rounds==12 → 终止
+    let mut steps = vec![];
+    for i in 0..13 {
+        steps.push(turn(&format!("r{i}")));
+        steps.push(turn("CONTINUE"));
+    }
+    let mut c = setup(cx, steps);
+    c.app.update(cx, |a, _| {
+        a.goal = Some("never done".into());
+    });
+    c.app.update(cx, |a, cx| a.send("start".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| a.goal.is_none() && !a.running, 15_000),
+        "goal 上限未终止"
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(has_notice(a, "12 轮上限"), "缺上限 Notice");
+    });
+}
+
+// ---------- 用例 8：/clear 与新建会话 ----------
+#[gpui::test]
+async fn case08_clear_and_new_chat_reset_state(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![turn("这是一个足够长的回复内容，用来让历史 token 估算大于零。")]);
+    c.app.update(cx, |a, cx| a.send("这是一个足够长的提问，用来让历史 token 估算大于零。".into(), cx));
+    assert!(wait(cx, &mut c, |a| !a.running, 5_000), "回合未完成");
+    let est_before = c.app.read_with(cx, |a, _| {
+        a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(1)
+    });
+    assert!(est_before > 0);
+    c.app.update(cx, |a, cx| {
+        assert!(a.handle_command("/clear", cx));
+    });
+    c.app.read_with(cx, |a, _| {
+        assert!(a.messages.is_empty(), "/clear 未清消息");
+        assert!(a.session.is_none(), "/clear 未清会话");
+        assert_eq!(a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(9), 0);
+        assert_eq!(a.view, View::Chat);
+    });
+    c.app.update(cx, |a, _cx| {
+        a.new_chat();
+        assert!(a.messages.len() == 1, "new_chat 缺可见反馈");
+        assert!(is_notice(&a.messages[0], "已新建会话"));
+    });
+}
+
+// ---------- 用例 9：/compact ----------
+#[gpui::test]
+async fn case09_compact_shrinks_history(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![turn("x")]);
+    c.app.update(cx, |a, _| {
+        let mut h = a.hist.try_lock().unwrap();
+        for i in 0..10 {
+            h.push_turn(format!("u{i}-{}", "长".repeat(1000)), format!("a{i}-{}", "复".repeat(1000)));
+        }
+    });
+    let before = c
+        .app
+        .read_with(cx, |a, _| a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0));
+    assert!(before > 4000, "前置 estimate 异常: {before}");
+    c.app.update(cx, |a, cx| {
+        assert!(a.handle_command("/compact", cx));
+    });
+    let after = c
+        .app
+        .read_with(cx, |a, _| a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0));
+    assert!(after < before, "压缩未生效: {before} → {after}");
+    c.app.read_with(cx, |a, _| {
+        assert!(has_notice(a, "压缩"), "缺压缩 Notice");
+    });
+}
+
+// ---------- 用例 10：权限三路（允许 / 总是允许；拒绝在用例 11） ----------
+#[gpui::test]
+async fn case10_permission_allow_and_always(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![
+        ScriptMock::tool_call_turn(""),
+        turn("d1"),
+        ScriptMock::tool_call_turn(""),
+        turn("d2"),
+        ScriptMock::tool_call_turn(""),
+        turn("d3"),
+    ]);
+    c.app.update(cx, |a, _| {
+        a.harness.as_ref().unwrap().deps.perms.try_lock().unwrap().set_mode(Mode::Manual);
+        a.mode = Mode::Manual;
+    });
+    // cycle1：Confirm → 允许
+    c.app.update(cx, |a, cx| a.send("go1".into(), cx));
+    assert!(wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000), "未弹权限确认");
+    c.app.read_with(cx, |a, _| assert_eq!(a.pending_permission.as_ref().unwrap().tool, "bash"));
+    c.app.update(cx, |a, cx| a.resolve_permission(Decision::Allow, cx));
+    assert!(wait(cx, &mut c, |a| !a.running && a.pending_permission.is_none(), 5_000), "允许后未收尾");
+    // cycle2：Confirm → 总是允许（会话内沉淀）
+    c.app.update(cx, |a, cx| a.send("go2".into(), cx));
+    assert!(wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000), "第二次未弹确认");
+    c.app.update(cx, |a, cx| a.resolve_permission(Decision::AllowAlways, cx));
+    assert!(wait(cx, &mut c, |a| !a.running, 5_000), "总是允许后未收尾");
+    c.app.read_with(cx, |a, _| {
+        let v = a.harness.as_ref().unwrap().deps.perms.try_lock().unwrap()
+            .evaluate("bash", false, "");
+        assert!(matches!(v, Verdict::Allow), "AllowAlways 未沉淀");
+    });
+    // cycle3：不再弹确认
+    c.app.update(cx, |a, cx| a.send("go3".into(), cx));
+    assert!(wait(cx, &mut c, |a| !a.running, 5_000), "沉淀后回合未完成");
+    c.app.read_with(cx, |a, _| {
+        assert!(a.pending_permission.is_none(), "沉淀后仍弹确认");
+        assert!(matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text == "d3"));
+    });
+}
+
+// ---------- 用例 11：ESC 优先级链（补全 → 权限拒绝） ----------
+#[gpui::test]
+async fn case11_esc_priority_chain(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![turn("x")]);
+    // ① 补全开 → ESC 只关补全
+    c.app.update(cx, |a, cx| {
+        a.input.update(cx, |i, cx| i.set_text("/", cx));
+    });
+    c.app.update(cx, |a, _| {
+        assert!(a.completion.is_open(), "补全未触发");
+        assert!(a.candidates.iter().any(|c| c.name == "/clear"), "指令候选缺失");
+    });
+    c.app.update(cx, |a, cx| a.interrupt(cx));
+    c.app.read_with(cx, |a, _| {
+        assert!(!a.completion.is_open(), "ESC 未关补全");
+        assert!(!a.running);
+        assert!(a.pending_permission.is_none());
+    });
+    // ② 权限弹窗 → ESC = Deny 回传
+    let (tx, mut rx) = tokio::sync::oneshot::channel();
+    c.app.update(cx, |a, _| {
+        a.pending_permission = Some(crate::app::PendingPermission {
+            tool: "bash".into(),
+            args_summary: "echo hi".into(),
+            respond: Some(tx),
+        });
+    });
+    c.app.update(cx, |a, cx| a.interrupt(cx));
+    c.app.read_with(cx, |a, _| assert!(a.pending_permission.is_none(), "ESC 未清弹窗"));
+    let decision = match rx.try_recv() {
+        Ok(d) => d,
+        Err(_) => panic!("Deny 未回传"),
+    };
+    assert!(matches!(decision, Decision::Deny));
+    // ③ running → ESC 打断（协作用于完整链路，见用例 3；此处只断言优先级末位不误触发视图切换）
+    c.app.read_with(cx, |a, _| assert_eq!(a.view, View::Chat));
+}
+
+// ---------- 用例 12：hist 锁超时防御 ----------
+#[gpui::test]
+async fn case12_hist_lock_timeout_defense(cx: &mut TestAppContext) {
+    let mut c = setup(cx, vec![turn("later")]);
+    // 测试线程持有 hist 锁，模拟"上游任务异常持锁"
+    let hist = c.app.read_with(cx, |a, _| a.hist.clone());
+    let guard = hist.try_lock().unwrap();
+    c.app.update(cx, |a, cx| a.send("blocked".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| !a.running && has_notice(a, "锁被占用"), 8_000),
+        "锁超时防御未生效"
+    );
+    c.app.read_with(cx, |a, _| {
+        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+    });
+    drop(guard);
+    // 锁释放后新回合正常完成
+    c.app.update(cx, |a, cx| a.send("after".into(), cx));
+    assert!(
+        wait(cx, &mut c, |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text }) if text == "later"),
+        5_000),
+        "锁释放后新回合未完成"
+    );
+}
+
+#[test]
+fn watch_isolation() {
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let h = rt.spawn(async move {
+        let mut c = rx;
+        loop {
+            if *c.borrow() { return 1u8; }
+            let _ = c.changed().await;
+        }
+    });
+    tx.send(true).unwrap();
+    let r = rt.block_on(async { tokio::time::timeout(std::time::Duration::from_secs(2), h).await });
+    match r {
+        Ok(Ok(1)) => println!("WATCH-ISOLATION-OK"),
+        other => println!("WATCH-ISOLATION-FAIL: {other:?}"),
+    }
+}

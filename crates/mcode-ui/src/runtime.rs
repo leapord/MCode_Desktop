@@ -57,6 +57,8 @@ pub struct Harness {
     pub ui_tx: tokio::sync::mpsc::UnboundedSender<UiEvent>,
     /// UI 事件接收端 — App 经 take_rx 接管（take 后为 None，重复接管安全）
     rx_slot: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<UiEvent>>>,
+    /// cancel 通道 keepalive 接收端（见 build_harness_async 注释）
+    _cancel_keepalive: tokio::sync::watch::Receiver<bool>,
     pub mcp_report: Vec<(String, Result<usize>)>,
 }
 
@@ -70,17 +72,37 @@ impl Harness {
 /// 构建 harness：后端 + 工具注册表（内置/web/skill/task/MCP）+ 权限 + hooks + ledger。
 /// MCP 连接为真实进程握手（initialize → tools/list）。
 pub fn build_harness(cfg: &Config, cwd: &PathBuf, rt: &UiRuntime) -> Result<Harness> {
-    rt.block_on(build_harness_async(cfg, cwd))
+    rt.block_on(build_harness_async(cfg, cwd, None))
 }
 
-async fn build_harness_async(cfg: &Config, cwd: &PathBuf) -> Result<Harness> {
+/// 测试注入用：显式给后端（绕过 ResponsesBackend 的真实 HTTP 客户端），其余组装路径完全一致。
+#[cfg(test)]
+pub fn build_harness_with_backend(
+    cfg: &Config,
+    cwd: &PathBuf,
+    rt: &UiRuntime,
+    backend: Arc<dyn ModelBackend>,
+) -> Result<Harness> {
+    rt.block_on(build_harness_async(cfg, cwd, Some(backend)))
+}
+
+async fn build_harness_async(
+    cfg: &Config,
+    cwd: &PathBuf,
+    backend_override: Option<Arc<dyn ModelBackend>>,
+) -> Result<Harness> {
     cfg.provider_ready()?;
-    let provider = cfg
-        .active_provider()
-        .ok_or_else(|| anyhow::anyhow!("未配置供应商"))?
-        .clone();
-    let model = cfg.active_model().unwrap_or_default();
-    let backend: Arc<dyn ModelBackend> = Arc::new(ResponsesBackend::new(provider, model)?);
+    let backend: Arc<dyn ModelBackend> = match backend_override {
+        Some(b) => b,
+        None => {
+            let provider = cfg
+                .active_provider()
+                .ok_or_else(|| anyhow::anyhow!("未配置供应商"))?
+                .clone();
+            let model = cfg.active_model().unwrap_or_default();
+            Arc::new(ResponsesBackend::new(provider, model)?)
+        }
+    };
 
     let (confirm_tx, mut confirm_rx): (ConfirmSender, _) = tokio::sync::mpsc::channel(16);
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
@@ -93,7 +115,10 @@ async fn build_harness_async(cfg: &Config, cwd: &PathBuf) -> Result<Harness> {
     registry.register(Arc::new(mcode_core::tools::web::WebSearch));
     registry.register(Arc::new(mcode_core::tools::skill_tool::SkillTool));
 
-    let (cancel_tx, _) = tokio::sync::watch::channel(false);
+    // keepalive 接收端：保证 cancel 通道恒有接收者，interrupt 的 send 永不失败。
+    // 否则"回合任务尚未 subscribe 时用户按 ESC"存在竞态：send(Err: 无接收者) 丢失，
+    // 任务随后照常启动并挂死（实测复现的"ESC 后无响应"根因之一）。
+    let (cancel_tx, _cancel_keepalive) = tokio::sync::watch::channel(false);
     let skills = mcode_core::skills::load_all(cwd);
     let deps = Arc::new(AgentDeps {
         cfg: cfg.clone(),
@@ -127,7 +152,13 @@ async fn build_harness_async(cfg: &Config, cwd: &PathBuf) -> Result<Harness> {
         }
     });
 
-    Ok(Harness { deps, ui_tx, rx_slot: Mutex::new(Some(ui_rx)), mcp_report })
+    Ok(Harness {
+        deps,
+        ui_tx,
+        rx_slot: Mutex::new(Some(ui_rx)),
+        _cancel_keepalive,
+        mcp_report,
+    })
 }
 
 /// 事件汇：AgentEvent → UI 事件流

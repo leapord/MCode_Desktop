@@ -179,7 +179,7 @@ pub async fn check_goal_complete(
     );
     let mut noop = |_: super::StreamEvent| {};
     match backend
-        .stream_turn(system.as_str(), &[], &input, &[], &[], &mut noop, cancel)
+        .stream_turn(system.as_str(), &[], &input, &[], &[], &crate::config::ThinkingEffort::Default, &mut noop, cancel)
         .await
     {
         Ok(t) if !t.interrupted => t.reply.to_lowercase().contains("goal_complete"),
@@ -205,6 +205,7 @@ mod goal_tests {
             _user_input: &str,
             _attachments: &[Attachment],
             _tools: &[crate::tools::ToolDefinition],
+            _effort: &crate::config::ThinkingEffort,
             _on_event: &mut (dyn FnMut(StreamEvent) + Send),
             _cancel: tokio::sync::watch::Receiver<bool>,
         ) -> anyhow::Result<StreamTurn> {

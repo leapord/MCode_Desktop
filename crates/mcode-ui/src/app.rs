@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::runtime::{event_sink, Harness, UiEvent, UiRuntime};
+use crate::session_ops::current_effort;
 use crate::text_input::{InputEvent, TextInput};
 
 actions!(
@@ -53,7 +54,7 @@ pub enum View {
 }
 
 /// 消息流视图模型（对齐 prototype chat.html 的消息形态）
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ChatMsg {
     User {
         text: SharedString,
@@ -86,7 +87,7 @@ pub enum ChatMsg {
     Running,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DiffLine {
     pub add: bool,
     pub del: bool,
@@ -111,7 +112,7 @@ pub struct App {
     pub ob_url: Entity<TextInput>,
     pub ob_key: Entity<TextInput>,
     pub ob_models: Entity<TextInput>,
-    rt: Arc<UiRuntime>,
+    pub(crate) rt: Arc<UiRuntime>,
     pub harness: Option<Arc<Harness>>,
     pub cfg: Config,
     /// run_agent_turn 消费的历史（回合任务持锁期间 UI 用 try_lock 只读）
@@ -157,6 +158,12 @@ pub struct App {
     pub explorer_focus: gpui::FocusHandle,
 }
 
+/// 回合任务获取 hist 锁的等待上限（测试用 1s 加速锁超时用例）
+#[cfg(test)]
+const HIST_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+#[cfg(not(test))]
+const HIST_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// 截断显示文本
 pub(crate) fn trunc(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
@@ -164,6 +171,17 @@ pub(crate) fn trunc(s: &str, n: usize) -> String {
 
 impl App {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        Self::init(cx, false)
+    }
+
+    /// 测试构造：不自动 build harness（测试用 build_harness_with_backend 注入 MockBackend），
+    /// 直接落在 Chat 视图。test_mode 下连真实 ~/.mcode/config.json 的 harness 都不建。
+    #[cfg(test)]
+    pub(crate) fn new_for_test(cx: &mut Context<Self>) -> Self {
+        Self::init(cx, true)
+    }
+
+    fn init(cx: &mut Context<Self>, test_mode: bool) -> Self {
         let cfg = Config::load();
         let cwd = std::env::current_dir().unwrap_or_default();
         let input = Self::make_input(cx, "向 MCode 发送消息…  （/ 指令 · @ 文件）");
@@ -207,7 +225,9 @@ impl App {
             goal_rounds: 0,
             tokens_total: 0,
             ctx_tokens: 0,
-            view: if needs_onboarding {
+            view: if test_mode {
+                View::Chat
+            } else if needs_onboarding {
                 View::Onboarding
             } else {
                 // 启动首屏：工作区选择器（IDEA 等同；选定后才落 cwd 构建 harness）
@@ -228,8 +248,9 @@ impl App {
             InputEvent::Changed(text) => this.sync_completion(text),
         })
         .detach();
-        // 非 onboarding 启动：构建 harness（失败 → Notice 引导去设置，不 panic）
-        if !needs_onboarding {
+        // 非 onboarding 启动：构建 harness（失败 → Notice 引导去设置，不 panic）；
+        // 测试模式下由测试显式注入 harness
+        if !needs_onboarding && !test_mode {
             me.rebuild_harness(cx);
         }
         me
@@ -286,7 +307,7 @@ impl App {
     // ---------- 发送 / 回合启动 ----------
 
     /// Composer 提交入口
-    fn send(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
         let text = text.trim().to_string();
         if text.is_empty() {
             return;
@@ -366,13 +387,34 @@ impl App {
             cx.notify();
             return;
         };
+        // 复位打断信号：start_turn 只在上一回合发出终态事件（Done/Error）之后才会被调到，
+        // 旧任务此后不再读 cancel，主线程此处复位安全。
+        // 若在 task 内复位，"任务尚未启动即被打断"时会把针对自己的 cancel 抹掉，
+        // 随后 is_cancelled 读到 false 照常运行并挂死（case03 并行跑稳定复现）。
         let _ = h.deps.cancel_tx.send(false);
         let deps = h.deps.clone();
         let hist = self.hist.clone();
         let sink = event_sink(h.ui_tx.clone());
+        let ui_tx = h.ui_tx.clone();
         let goal = self.goal.clone();
+        // 思考深度：每次 launch_turn 读 desktop.json（改设置即时生效，无需重建 harness）
+        let effort = current_effort();
         self.rt.spawn(async move {
-            let mut hs = hist.lock().await;
+            // 锁饿死防御：上游任务若异常持锁（如流挂起旧 bug），不能静默饿死后续回合。
+            // 超时 → 经事件流发 Error + Done，UI 正常收尾并给用户明确文案。
+            let mut hs = match tokio::time::timeout(HIST_LOCK_TIMEOUT, hist.lock()).await {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = ui_tx.send(UiEvent::Agent(AgentEvent::Error {
+                        message: format!(
+                            "回合历史锁被占用超过 {}s（上一回合可能未正常收尾），本次回合已放弃",
+                            HIST_LOCK_TIMEOUT.as_secs()
+                        ),
+                    }));
+                    let _ = ui_tx.send(UiEvent::Agent(AgentEvent::Done { reply: String::new() }));
+                    return;
+                }
+            };
             run_agent_turn(
                 &deps,
                 &input,
@@ -382,6 +424,7 @@ impl App {
                     goal,
                     tools_filter: None,
                     attachments,
+                    effort,
                     history: &mut hs,
                     emit: sink,
                 },
@@ -437,7 +480,7 @@ impl App {
     // ---------- 内核事件处理 ----------
 
     /// 事件泵入口：Agent 事件 / 权限确认 / goal 裁判
-    fn on_ui_event(&mut self, ev: UiEvent, cx: &mut Context<Self>) {
+    pub(crate) fn on_ui_event(&mut self, ev: UiEvent, cx: &mut Context<Self>) {
         match ev {
             UiEvent::Agent(e) => self.on_agent_event(e, cx),
             UiEvent::Confirm(req) => {
@@ -554,8 +597,13 @@ impl App {
             AgentEvent::Compacted { note } => {
                 self.push_notice(format!("🗜 已压缩历史：{note}"), false);
             }
-            // 回合收尾：goal 激活时优先推进 goal 循环（queue 等 goal 结束再消化）
+            // 回合收尾：goal 激活时优先推进 goal 循环（queue 等 goal 结束再消化）。
+            // running=false 时收到的 Done 是被放弃/已超时的陈旧回合，忽略以防污染当前状态。
             AgentEvent::Done { reply } => {
+                if !self.running {
+                    cx.notify();
+                    return;
+                }
                 if !reply.is_empty() && !matches!(self.messages.last(), Some(ChatMsg::Assistant { .. })) {
                     self.messages.push(ChatMsg::Assistant { text: reply.clone().into() });
                 }
@@ -580,7 +628,10 @@ impl App {
             }
             AgentEvent::Error { message } => {
                 self.push_notice(format!("✗ {message}"), true);
-                self.finish_run(cx);
+                // 陈旧回合的错误（新回合已启动）不能收尾当前回合
+                if self.running {
+                    self.finish_run(cx);
+                }
             }
         }
     }
@@ -622,10 +673,10 @@ impl App {
             if let Some(h) = &self.harness {
                 let _ = h.deps.cancel_tx.send(true);
             }
-            // 乐观收尾：回合可能在等待流数据（cancel 生效需要时间）或已死于错误
-            // （此时永远等不到 Done 回执，之前表现为"ESC 无效"）。
-            // finish_run 幂等：后续 Done(空回复) 到达时重复调用无副作用。
-            self.finish_run(_cx);
+            // 不做"乐观收尾"：若在此处提前 finish_run，用户立刻再发消息会触发
+            // start_turn 把 cancel 复位为 false，旧任务可能还没观察到 cancel=true，
+            // 从此永远错过打断信号并持 hist 锁挂死（实测复现的"ESC 后再输入无响应"）。
+            // Done(空回复)/Error 事件会随后到达并调用 finish_run 正常收尾。
             return;
         }
         if self.view != View::Chat {

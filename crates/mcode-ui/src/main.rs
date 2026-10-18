@@ -1,6 +1,8 @@
 //! MCode_Desktop — GPUI 桌面端入口
 
 mod app;
+#[cfg(test)]
+mod interaction_tests;
 mod chat_view;
 mod file_explorer;
 mod runtime;
@@ -67,10 +69,18 @@ fn main() {
             }),
             ..Default::default()
         };
-        cx.open_window(options, |_, cx| {
-            cx.new(|cx| App::new(cx))
+        let root = cx
+            .open_window(options, |_, cx| {
+                cx.new(|cx| App::new(cx))
+            })
+            .unwrap();
+        // 启动即聚焦 Composer:gpui 的按键 action 只沿焦点路径分发,无焦点时 Enter(Submit)
+        // 根本到不了 TextInput——用户实测"输入后零响应"的根因即此(窗口打开后无任何元素持焦)。
+        root.update(cx, |app, window, cx| {
+            let handle = app.input.read(cx).focus_handle.clone();
+            handle.focus(window);
         })
-        .unwrap();
+        .ok();
         cx.activate(true);
     });
 }

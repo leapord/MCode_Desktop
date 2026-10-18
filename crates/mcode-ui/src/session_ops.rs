@@ -58,6 +58,8 @@ impl App {
         if let Ok(mut h) = self.hist.try_lock() { h.clear(); }
         self.session = None;
         self.running = false;
+        // 可见反馈：空会话下点击「新建会话」也有变化（用户实测反馈）
+        self.push_notice("✨ 已新建会话，开始提问吧".to_string(), false);
     }
 
     /// 权限模式循环（真值在 harness.deps.perms；锁被持有时退化为本地缓存循环）
@@ -133,6 +135,28 @@ impl App {
                     self.push_notice(format!("✓ 语言 → {}", lang_label(l)), false);
                 } else {
                     self.push_notice(format!("✗ 无法识别语言 {arg}"), true);
+                }
+            }
+            "/effort" => {
+                if arg.is_empty() {
+                    let cur = mcode_core::config::DesktopConfig::load().thinking_effort();
+                    self.push_notice(
+                        format!(
+                            "当前思考深度：{}（可选 default/low/medium/high，/effort <level> 切换，下一回合生效）",
+                            cur.as_str()
+                        ),
+                        false,
+                    );
+                } else if let Some(level) = mcode_core::config::ThinkingEffort::parse(arg) {
+                    let mut desktop = mcode_core::config::DesktopConfig::load();
+                    desktop.thinking_effort = level.as_str().to_string();
+                    desktop.save().ok();
+                    self.push_notice(format!("🧠 思考深度 → {}（下一回合生效）", level.as_str()), false);
+                } else {
+                    self.push_notice(
+                        format!("✗ 无法识别思考深度 {arg}（可选 default/low/medium/high）"),
+                        true,
+                    );
                 }
             }
             "/clear" => {
@@ -463,6 +487,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// 当前思考深度（launch_turn 每回合读 desktop.json）
+pub(crate) fn current_effort() -> mcode_core::config::ThinkingEffort {
+    mcode_core::config::DesktopConfig::load().thinking_effort()
 }
 
 use crate::app::App;

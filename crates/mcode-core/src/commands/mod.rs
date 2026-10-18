@@ -27,6 +27,7 @@ pub const COMMANDS: &[CommandDef] = &[
     CommandDef { name: "/cost", group: "配置与状态", desc: "token 与费用统计汇总", mcode_only: false },
     CommandDef { name: "/token", group: "配置与状态", desc: "按模型打印 token 明细", mcode_only: true },
     CommandDef { name: "/language", group: "配置与状态", desc: "切换语言环境", mcode_only: true },
+    CommandDef { name: "/effort", group: "配置与状态", desc: "思考深度 default/low/medium/high", mcode_only: true },
     CommandDef { name: "/doctor", group: "配置与状态", desc: "诊断安装与配置健康度", mcode_only: false },
     CommandDef { name: "/output-style", group: "配置与状态", desc: "切换输出风格", mcode_only: false },
     CommandDef { name: "/statusline", group: "配置与状态", desc: "配置状态栏", mcode_only: false },

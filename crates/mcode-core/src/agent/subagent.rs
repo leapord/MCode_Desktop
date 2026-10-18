@@ -208,6 +208,8 @@ impl Tool for TaskTool {
                 goal: None,
                 tools_filter: agent.tools.clone(),
                 attachments: vec![],
+                // subagent 不继承主回合的思考深度设置
+                effort: crate::config::ThinkingEffort::Default,
                 history: &mut HistoryStore::default(),
                 emit: Arc::new(move |mut ev| {
                     // 子回合事件标注 scope 后冒泡（对齐 CLI: name = "agentname:toolname"）。
