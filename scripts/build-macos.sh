@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 cargo build --release -p mcode-ui
 APP="target/release/bundle/MCode_Desktop.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# 内置资产（ecc-core agents/skills + pua-core skills）随包分发，运行时物化到 ~/.mcode/assets
+cp -R assets "$APP/Contents/Resources/assets"
 cp target/release/MCode_Desktop "$APP/Contents/MacOS/"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

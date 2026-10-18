@@ -166,6 +166,12 @@ impl App {
         let ob_key = Self::make_input(cx, "API key 环境变量名，如 ZHIPU_API_KEY");
         let ob_models = Self::make_input(cx, "逗号分隔，如 glm-4.7-multimodal,glm-4.7-air");
         let needs_onboarding = cfg.needs_onboarding();
+        // 内置资产（ecc-core agents/skills + pua-core）一次性物化到 ~/.mcode/assets，
+        // skills/skill 工具/task 内置 agent/PUA 指令的数据源
+        let materialized = mcode_core::util::materialize_bundled_assets();
+        if materialized > 0 {
+            eprintln!("已物化内置资产 {materialized} 组");
+        }
         let mut me = Self {
             focus_handle: cx.focus_handle(),
             input,

@@ -52,10 +52,11 @@ fn load_dir(dir: &Path, source: &str, out: &mut Vec<Skill>) {
     }
 }
 
-/// 加载顺序：内置 ecc-core → 用户级 → 项目级（后加载可覆盖同名，对齐 3.2）
+/// 加载顺序：内置 ecc-core → 内置 pua-core → 用户级 → 项目级（后加载可覆盖同名，对齐 3.2）
 pub fn load_all(project_dir: &Path) -> Vec<Skill> {
     let mut skills = vec![];
     load_dir(&crate::util::mcode_dir().join("assets/ecc-core/skills"), "ecc-core", &mut skills);
+    load_dir(&crate::util::mcode_dir().join("assets/pua-core"), "pua-core", &mut skills);
     load_dir(&crate::util::mcode_dir().join("skills"), "user", &mut skills);
     load_dir(&project_dir.join(".mcode/skills"), "project", &mut skills);
     dedup(skills)

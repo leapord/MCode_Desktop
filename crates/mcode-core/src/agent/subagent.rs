@@ -59,22 +59,62 @@ pub fn builtin_agents() -> Vec<AgentDefinition> {
     ]
 }
 
-/// 用户级 agent（~/.mcode/agents/*.md，frontmatter name/description/tools + 正文为 system prompt）
+/// 用户级 agent（~/.mcode/agents/*.md + 物化后的内置 ecc agents，frontmatter + 正文为 system prompt）
 pub fn load_user_agents() -> Vec<AgentDefinition> {
-    let dir = crate::util::mcode_dir().join("agents");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
     let mut out = vec![];
-    for e in entries.flatten() {
-        let path = e.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        if let Some(def) = parse_agent_md(&text) {
-            out.push(def);
+    for dir in [
+        crate::util::mcode_dir().join("assets/ecc-core/agents"), // 物化后的内置层
+        crate::util::mcode_dir().join("agents"),                 // 用户级（覆盖同名内置）
+    ] {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if let Some(def) = parse_agent_md(&text) {
+                out.push(def);
+            }
         }
     }
     out
+}
+
+/// Claude Code 工具名 → MCode 工具名映射（内置 ECC agents 用 CC 命名，对齐 CLI 的映射口径）
+fn map_tool_names(tools: Option<Vec<String>>) -> Option<Vec<String>> {
+    const MAP: &[(&str, &str)] = &[
+        ("read", "read_file"),
+        ("write", "write_file"),
+        ("edit", "edit_file"),
+        ("multiedit", "edit_file"),
+        ("notebook", "edit_file"),
+        ("notebookedit", "edit_file"),
+        ("bash", "bash"),
+        ("glob", "glob"),
+        ("grep", "grep"),
+        ("webfetch", "webfetch"),
+        ("websearch", "websearch"),
+        ("task", "task"),
+        ("skill", "skill"),
+    ];
+    tools.map(|list| {
+        list.into_iter()
+            .map(|t| {
+                MAP.iter()
+                    .find(|(cc, _)| cc.eq_ignore_ascii_case(&t))
+                    .map(|(_, mc)| mc.to_string())
+                    .unwrap_or(t)
+            })
+            .filter(|t| {
+                const KNOWN: &[&str] = &[
+                    "read_file", "write_file", "edit_file", "bash", "glob", "grep", "webfetch",
+                    "websearch", "skill", "task",
+                ];
+                KNOWN.contains(&t.as_str())
+            })
+            .collect()
+    })
 }
 
 /// 解析 agent .md：--- 包裹 frontmatter（name/description/tools 逗号分隔），正文 = system prompt（20k 截断）
@@ -105,7 +145,7 @@ fn parse_agent_md(text: &str) -> Option<AgentDefinition> {
     if body.is_empty() {
         return None;
     }
-    Some(AgentDefinition { name: name?, description: desc, system_prompt: body, tools, max_turns: None })
+    Some(AgentDefinition { name: name?, description: desc, system_prompt: body, tools: map_tool_names(tools), max_turns: None })
 }
 
 /// 合并注册表：内置 → 用户级同名覆盖（对齐 CLI merge order）

@@ -96,3 +96,59 @@ mod tests {
         assert_eq!(l.total().output, 15);
     }
 }
+
+/// 打包内资产的运行时定位：macOS .app Resources → 可执行文件旁 assets/ → 仓库源码路径（cargo run 兜底）
+pub fn assets_source_dir() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        // .app/Contents/MacOS/exe → .app/Contents/Resources/assets
+        if let Some(res) = exe.parent().and_then(|p| p.parent()).map(|p| p.join("Resources/assets")) {
+            if res.is_dir() {
+                return Some(res);
+            }
+        }
+        if let Some(adj) = exe.parent().map(|p| p.join("assets")) {
+            if adj.is_dir() {
+                return Some(adj);
+            }
+        }
+    }
+    // cargo run / 开发态：仓库根 assets
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    if repo.is_dir() {
+        return Some(repo);
+    }
+    None
+}
+
+/// CLI 同款落地机制：内置资产一次性物化到 ~/.mcode/assets（已存在则跳过，删除后重新落地可强制更新）
+pub fn materialize_bundled_assets() -> usize {
+    let Some(src) = assets_source_dir() else { return 0 };
+    let dst_root = mcode_dir().join("assets");
+    let mut n = 0;
+    for tier in ["ecc-core", "pua-core"] {
+        let from = src.join(tier);
+        let to = dst_root.join(tier);
+        if !from.is_dir() || to.is_dir() {
+            continue;
+        }
+        if copy_tree(&from, &to).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// 递归复制目录（物化用；文件操作工具另有带钳制/防逃逸的实现）
+fn copy_tree(from: &PathBuf, to: &PathBuf) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let t = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &t)?;
+        } else {
+            std::fs::copy(entry.path(), &t)?;
+        }
+    }
+    Ok(())
+}
