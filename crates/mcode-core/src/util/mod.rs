@@ -1,5 +1,7 @@
 //! 通用工具：数据目录、token 统计
 
+pub mod file_refs;
+
 use std::path::PathBuf;
 
 /// 与 CLI 版完全互通的数据根目录：`~/.mcode/`
