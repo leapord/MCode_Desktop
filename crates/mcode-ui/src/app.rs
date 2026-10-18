@@ -598,8 +598,10 @@ impl App {
     }
 
     fn pop_running(&mut self) {
-        if matches!(self.messages.last(), Some(ChatMsg::Running)) {
-            self.messages.pop();
+        // 从尾部扫描移除 Running 占位——不能假设它是最后一条
+        // （错误 Notice / 模型切换 Notice 会插在它后面，曾致"运行中"永久滞留）
+        if let Some(idx) = self.messages.iter().rposition(|m| matches!(m, ChatMsg::Running)) {
+            self.messages.remove(idx);
         }
     }
 
@@ -620,6 +622,10 @@ impl App {
             if let Some(h) = &self.harness {
                 let _ = h.deps.cancel_tx.send(true);
             }
+            // 乐观收尾：回合可能在等待流数据（cancel 生效需要时间）或已死于错误
+            // （此时永远等不到 Done 回执，之前表现为"ESC 无效"）。
+            // finish_run 幂等：后续 Done(空回复) 到达时重复调用无副作用。
+            self.finish_run(_cx);
             return;
         }
         if self.view != View::Chat {

@@ -171,6 +171,9 @@ pub async fn run_agent_turn(deps: &Arc<AgentDeps>, user_input: &str, opts: TurnO
                     let msg = format!("{e:#}");
                     if !is_transient(&msg) || attempt >= MAX_STREAM_RETRIES - 1 {
                         emit(AgentEvent::Error { message: msg });
+                        // Done 必须跟随 Error：UI/pump 以 Done 为回合收尾信号，
+                        // 缺失会导致 Running 占位滞留（对齐 CLI 错误路径也发 done 的语义）
+                        emit(AgentEvent::Done { reply: String::new() });
                         return String::new();
                     }
                     emit(AgentEvent::Retrying {
@@ -187,6 +190,7 @@ pub async fn run_agent_turn(deps: &Arc<AgentDeps>, user_input: &str, opts: TurnO
         }
         let Some(t) = turn else {
             emit(AgentEvent::Error { message: "流式重试耗尽".into() });
+            emit(AgentEvent::Done { reply: String::new() });
             return String::new();
         };
 

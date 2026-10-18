@@ -13,6 +13,9 @@ pub use crate::permission::Mode;
 #[serde(rename_all = "camelCase", default)]
 pub struct Provider {
     pub name: String,
+    /// CLI schema 为 `baseURL`（大写 URL）——camelCase 会产出 baseUrl 导致字段静默丢失，
+    /// 必须显式 rename 对齐（曾经因此把用户 config 的 baseURL 丢成空串）
+    #[serde(rename = "baseURL")]
     pub base_url: String,
     /// 环境变量名；若不是合法变量名则按明文 key 兜底（对齐 CLI resolveApiKey）
     pub api_key_env: String,
@@ -320,6 +323,16 @@ mod tests {
         // 非合法变量名 → 明文兜底
         p.api_key_env = "sk-literal-key".into();
         assert_eq!(p.resolve_api_key().as_deref(), Some("sk-literal-key"));
+    }
+
+    #[test]
+    fn base_url_key_matches_cli_schema_exactly() {
+        // 回归：camelCase 产出 baseUrl 与 CLI 的 baseURL 错位，读丢 → 写坏用户 config
+        let raw = r#"{"name":"glm","baseURL":"https://open.bigmodel.cn/api/v1","apiKeyEnv":"K","models":["m"]}"#;
+        let p: Provider = serde_json::from_str(raw).unwrap();
+        assert_eq!(p.base_url, "https://open.bigmodel.cn/api/v1");
+        let out = serde_json::to_string(&p).unwrap();
+        assert!(out.contains("\"baseURL\":\"https://"), "序列化必须产出 baseURL 键: {out}");
     }
 
     #[test]
