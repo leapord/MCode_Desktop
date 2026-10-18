@@ -7,6 +7,8 @@ APP="target/release/bundle/MCode_Desktop.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # 内置资产（ecc-core agents/skills + pua-core skills）随包分发，运行时物化到 ~/.mcode/assets
 cp -R assets "$APP/Contents/Resources/assets"
+# 应用图标（scripts/make_icons.py 生成）
+cp assets/brand/icon.icns "$APP/Contents/Resources/icon.icns"
 cp target/release/MCode_Desktop "$APP/Contents/MacOS/"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -17,6 +19,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleExecutable</key><string>MCode_Desktop</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>10.15</string>
