@@ -16,8 +16,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>MCode_Desktop</string>
   <key>CFBundleIdentifier</key><string>dev.mcode.desktop</string>
-  <key>CFBundleVersion</key><string>0.1.1</string>
-  <key>CFBundleShortVersionString</key><string>0.1.1</string>
+  <key>CFBundleVersion</key><string>0.1.2</string>
+  <key>CFBundleShortVersionString</key><string>0.1.2</string>
   <key>CFBundleExecutable</key><string>MCode_Desktop</string>
   <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>

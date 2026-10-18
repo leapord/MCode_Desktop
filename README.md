@@ -160,3 +160,13 @@ Shares the same data directory and config format as the [MCode CLI](https://gith
 ## License
 
 [MIT](LICENSE) © 2026 Materin-tech
+
+## 版本规范 / Versioning
+
+遵循 [语义化版本](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`
+
+- **PATCH**（`0.1.2 → 0.1.3`）：每次缺陷修复自动 +1
+- **MINOR**：新增功能
+- **MAJOR**：不兼容变更
+
+遵循 [Semantic Versioning](https://semver.org/): every bug fix bumps the patch version automatically; features bump minor; breaking changes bump major.
