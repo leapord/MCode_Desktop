@@ -29,23 +29,30 @@ pub struct FileRefResult {
 /// 匹配 '@path' 引用：路径须以词字符结尾，避免吞掉句尾标点（对齐 CLI FILE_REF_PATTERN）
 pub fn extract_refs(input: &str) -> Vec<String> {
     let mut refs = vec![];
-    let bytes = input.as_bytes();
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'@' && (i == 0 || !is_word(bytes[i - 1])) {
-            let start = i + 1;
-            let mut end = start;
-            while end < bytes.len() && (is_word(bytes[end]) || bytes[end] == b'/' || bytes[end] == b'.' || bytes[end] == b'-') {
-                end += 1;
+    while i < chars.len() {
+        let (byte_idx, c) = chars[i];
+        if c == '@' && (i == 0 || !is_word(chars[i - 1].1)) {
+            let start_byte = byte_idx + 1;
+            let mut end_byte = start_byte;
+            let mut end_i = i + 1;
+            while end_i < chars.len()
+                && (is_word(chars[end_i].1) || matches!(chars[end_i].1, '/' | '.' | '-'))
+            {
+                end_byte = chars[end_i].0 + chars[end_i].1.len_utf8();
+                end_i += 1;
             }
-            // 尾部须是词字符（防吞标点）
-            if end > start && is_word(bytes[end - 1]) {
-                let r = &input[start..end];
-                if !r.is_empty() && !refs.contains(&r.to_string()) {
-                    refs.push(r.to_string());
+            // 剥离尾部 CJK 标点（防吞句末标点，如 @README.md。）
+            if end_byte > start_byte {
+                let mut slice = &input[start_byte..end_byte];
+                slice = slice.trim_end_matches(|ch| CJK_PUNCT.contains(&ch));
+                let last_ok = slice.chars().next_back().map_or(false, is_word);
+                if !slice.is_empty() && last_ok && !refs.contains(&slice.to_string()) {
+                    refs.push(slice.to_string());
                 }
             }
-            i = end;
+            i = end_i;
         } else {
             i += 1;
         }
@@ -53,8 +60,10 @@ pub fn extract_refs(input: &str) -> Vec<String> {
     refs
 }
 
-fn is_word(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80 // CJK 等多字节字符
+const CJK_PUNCT: &[char] = &['。', '，', '、', '；', '：', '！', '？', '）', '》', '」', '』', '】', '〉'];
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 fn mime_of(path: &str) -> &'static str {
