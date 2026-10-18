@@ -162,26 +162,49 @@ impl Tool for TaskTool {
             &prompt,
             TurnOpts {
                 instructions: Some(agent.system_prompt.clone()),
-                max_turns: agent.max_turns.unwrap_or(10),
+                // 对齐 CLI 实际行为：loop.ts 的 while 用常量 MAX_TOOL_TURNS，
+                // agent.maxTurns 定义了但未被引用——subagent 缺省同样跑满 25 轮
+                max_turns: agent.max_turns.unwrap_or(super::runner::MAX_TOOL_TURNS),
                 goal: None,
                 tools_filter: agent.tools.clone(),
                 attachments: vec![],
                 history: &mut HistoryStore::default(),
                 emit: Arc::new(move |mut ev| {
-                    // 子 agent 事件标注 scope 后冒泡（对齐 CLI: name = "agentname:toolname"）
-                    match &mut ev {
+                    // 子回合事件标注 scope 后冒泡（对齐 CLI: name = "agentname:toolname"）。
+                    // Done/Error 不冒泡——主回合以 task 工具的 ToolResult 收尾，
+                    // 子回合的流错误转为 ToolResult 展示。
+                    let forward = match &mut ev {
                         super::AgentEvent::ToolStart { name, scope: s, .. } => {
                             *name = format!("{sub_name}:{name}");
                             *s = scope.clone();
+                            true
                         }
                         super::AgentEvent::ToolResult { name, scope: s, .. } => {
                             *name = format!("{sub_name}:{name}");
                             *s = scope.clone();
+                            true
                         }
-                        super::AgentEvent::Reasoning { scope: s, .. } => *s = scope.clone(),
-                        _ => {}
+                        super::AgentEvent::Reasoning { scope: s, .. } => {
+                            *s = scope.clone();
+                            true
+                        }
+                        super::AgentEvent::Done { .. } => false,
+                        super::AgentEvent::Error { message } => {
+                            ev = super::AgentEvent::ToolResult {
+                                name: format!("{sub_name}:error"),
+                                success: false,
+                                output: message.clone(),
+                                display: None,
+                                scope: Some(sub_name.clone()),
+                            };
+                            true
+                        }
+                        super::AgentEvent::TextDelta(_) | super::AgentEvent::Retrying { .. } => false,
+                        _ => true,
+                    };
+                    if forward {
+                        emit(ev);
                     }
-                    emit(ev);
                 }),
             },
         )

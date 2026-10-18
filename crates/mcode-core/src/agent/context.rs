@@ -156,3 +156,75 @@ mod tests {
         assert!(p.contains("GOAL_COMPLETE"));
     }
 }
+
+/// goal 外层循环轮数上限（对齐 CLI cli.tsx runTurn）
+pub const MAX_GOAL_ROUNDS: usize = 12;
+
+/// goal 完成裁判：独立单发流式调用（无工具、空历史），仅显式 GOAL_COMPLETE 判词才通过。
+/// fail-open：裁判出错/被打断 → 返回 false 继续干（对齐 CLI goal.ts checkGoalComplete）。
+pub async fn check_goal_complete(
+    backend: &dyn super::ModelBackend,
+    goal: &str,
+    cancel: tokio::sync::watch::Receiver<bool>,
+) -> bool {
+    let system = [
+        "You are a strict completion judge. Given a goal and the work done so far (summarized by the conversation), decide:",
+        "- If the goal is FULLY achieved: reply with exactly GOAL_COMPLETE",
+        "- Otherwise: reply with exactly GOAL_CONTINUE",
+        "Reply with one word only.",
+    ]
+    .join("\n");
+    let input = format!(
+        "Goal: {goal}\nJudge whether the goal is fully achieved based on the conversation history above your judge instruction is not visible to you — answer GOAL_COMPLETE only if the visible work demonstrably completes the goal."
+    );
+    let mut noop = |_: super::StreamEvent| {};
+    match backend
+        .stream_turn(system.as_str(), &[], &input, &[], &[], &mut noop, cancel)
+        .await
+    {
+        Ok(t) if !t.interrupted => t.reply.to_lowercase().contains("goal_complete"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod goal_tests {
+    use super::*;
+    use crate::agent::{ApiMessage, Attachment, StreamEvent, StreamTurn, ToolCall};
+
+    struct JudgeBackend {
+        reply: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::agent::ModelBackend for JudgeBackend {
+        async fn stream_turn(
+            &self,
+            _system: &str,
+            _history: &[ApiMessage],
+            _user_input: &str,
+            _attachments: &[Attachment],
+            _tools: &[crate::tools::ToolDefinition],
+            _on_event: &mut (dyn FnMut(StreamEvent) + Send),
+            _cancel: tokio::sync::watch::Receiver<bool>,
+        ) -> anyhow::Result<StreamTurn> {
+            Ok(StreamTurn {
+                reply: self.reply.into(),
+                tool_calls: Vec::<ToolCall>::new(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn judge_accepts_only_explicit_verdict() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let yes = JudgeBackend { reply: "GOAL_COMPLETE".into() };
+        assert!(check_goal_complete(&yes, "ship", rx.clone()).await);
+        let no = JudgeBackend { reply: "GOAL_CONTINUE".into() };
+        assert!(!check_goal_complete(&no, "ship", rx.clone()).await);
+        let junk = JudgeBackend { reply: "I think it is done".into() };
+        assert!(!check_goal_complete(&junk, "ship", rx).await);
+        let _ = tx;
+    }
+}
