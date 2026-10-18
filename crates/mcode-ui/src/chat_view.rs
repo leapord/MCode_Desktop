@@ -217,7 +217,7 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
         .bg(BG_MAIN)
         .text_color(TEXT_1)
         .when_some(perm_overlay, |d, ov| d.child(ov))
-        .when_some(crate::file_explorer::render_context_menu(app, cx), |d, m| d.child(m))
+        .when_some(crate::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
         .when_some(crate::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
         // 顶栏
         .child(

@@ -23,7 +23,7 @@ use tokio::sync::watch;
 // ---------- 脚本化 MockBackend ----------
 
 #[derive(Clone)]
-enum Step {
+pub(crate) enum Step {
     /// 正常一轮流式结果（reply 会以 TextDelta 发出）
     Turn(StreamTurn),
     /// 直接报错（文案避免触发 runner 的瞬时错误重试词表）
@@ -151,12 +151,12 @@ fn test_config() -> Config {
     }
 }
 
-static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
 
-struct Ctx {
-    app: Entity<App>,
-    rx: tokio::sync::mpsc::UnboundedReceiver<UiEvent>,
-    tmp: PathBuf,
+pub(crate) struct Ctx {
+    pub app: Entity<App>,
+    pub rx: tokio::sync::mpsc::UnboundedReceiver<UiEvent>,
+    pub tmp: PathBuf,
 }
 
 impl Drop for Ctx {
@@ -165,11 +165,11 @@ impl Drop for Ctx {
     }
 }
 
-fn turn(reply: &str) -> Step {
+pub(crate) fn turn(reply: &str) -> Step {
     Step::Turn(StreamTurn { reply: reply.into(), ..Default::default() })
 }
 
-fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx {
+pub(crate) fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx {
     let n = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
     let tmp = std::env::temp_dir().join(format!("mcode-ui-test-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -187,7 +187,7 @@ fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx
     Ctx { app, rx, tmp }
 }
 
-fn setup(cx: &mut TestAppContext, steps: Vec<Step>) -> Ctx {
+pub(crate) fn setup(cx: &mut TestAppContext, steps: Vec<Step>) -> Ctx {
     setup_backend(
         cx,
         Arc::new(ScriptMock {
@@ -199,7 +199,7 @@ fn setup(cx: &mut TestAppContext, steps: Vec<Step>) -> Ctx {
 }
 
 /// 泵事件：channel 里所有 UiEvent → on_ui_event，直到条件满足或超时
-fn wait(cx: &mut TestAppContext, ctx: &mut Ctx, cond: impl Fn(&App) -> bool, ms: u64) -> bool {
+pub(crate) fn wait(cx: &mut TestAppContext, ctx: &mut Ctx, cond: impl Fn(&App) -> bool, ms: u64) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     loop {
         while let Ok(ev) = ctx.rx.try_recv() {
@@ -215,11 +215,11 @@ fn wait(cx: &mut TestAppContext, ctx: &mut Ctx, cond: impl Fn(&App) -> bool, ms:
     }
 }
 
-fn is_notice(m: &ChatMsg, contains: &str) -> bool {
+pub(crate) fn is_notice(m: &ChatMsg, contains: &str) -> bool {
     matches!(m, ChatMsg::Notice { text, .. } if text.contains(contains))
 }
 
-fn has_notice(a: &App, contains: &str) -> bool {
+pub(crate) fn has_notice(a: &App, contains: &str) -> bool {
     a.messages.iter().any(|m| is_notice(m, contains))
 }
 

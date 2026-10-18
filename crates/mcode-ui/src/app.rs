@@ -117,9 +117,9 @@ pub struct App {
     /// 文件浏览器键上下文的焦点句柄（cmd-c/x/v 拦截）
     pub explorer_focus: gpui::FocusHandle,
     /// 右键上下文菜单（渲染为绝对定位浮层）
-    pub(crate) context_menu: Option<crate::file_explorer::CtxMenu>,
+    pub(crate) context_menu: Option<crate::context_menu::CtxMenu>,
     /// 行内重命名弹窗（预填当前名 + 确认/取消）
-    pub(crate) rename_state: Option<crate::file_explorer::RenameState>,
+    pub(crate) rename_state: Option<crate::context_menu::RenameState>,
 }
 /// 回合任务获取 hist 锁的等待上限（测试用 1s 加速锁超时用例）
 #[cfg(test)]

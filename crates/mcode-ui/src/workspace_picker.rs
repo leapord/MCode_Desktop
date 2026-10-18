@@ -61,6 +61,11 @@ impl App {
 
     /// 进入工作区：cwd → recent → 清会话态 → 重扫 file_tree → rebuild harness → 刷侧栏 → Chat
     pub(crate) fn enter_workspace(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
+        if !path.is_dir() {
+            self.push_notice(format!("✗ 不是目录：{}", path.display()), true);
+            cx.notify();
+            return;
+        }
         self.cwd = path;
         self.record_recent();
         self.new_chat();
@@ -76,6 +81,35 @@ impl App {
         self.view = View::Chat;
         self.push_notice(format!("📂 工作区：{}", trunc(&self.cwd.to_string_lossy(), 60)), false);
         cx.notify();
+    }
+
+    /// 系统原生目录选择对话框（prompt_for_paths directories 模式）。
+    /// 结果回主线程走 enter_workspace 链；取消不动当前状态。
+    /// 注意：测试平台 prompt_for_paths 未实现（unimplemented!()），无头测试直调 enter_workspace 覆盖链路。
+    pub(crate) fn start_dir_picker(&mut self, cx: &mut gpui::Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("选择工作目录".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await;
+            let _ = this.update(cx, |a, cx| {
+                match result {
+                    Ok(Ok(Some(mut paths))) => {
+                        if let Some(p) = paths.pop() {
+                            a.enter_workspace(p, cx);
+                        }
+                    }
+                    Ok(Ok(None)) => {} // 用户取消，不动当前状态
+                    Ok(Err(e)) => a.push_notice(format!("✗ 目录选择失败：{e:#}"), true),
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 校验并规范化输入的目录路径（~ 展开 + is_dir）
@@ -159,10 +193,29 @@ pub fn render_workspace_picker(app: &mut App, cx: &mut gpui::Context<App>) -> An
                                 )
                         })),
                 )
-                // 打开其他目录
+                // 打开其他目录：系统原生目录选择对话框（主）+ 手动输入（次）
                 .child(
                     div().flex().flex_col().gap_1()
-                        .child(div().text_size(px(12.)).text_color(TEXT_3).child("打开其他目录…"))
+                        .child(
+                            div()
+                                .id("btn-ws-browse")
+                                .w_full()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(BORDER_STRONG)
+                                .bg(BG_PANEL)
+                                .py_2()
+                                .text_center()
+                                .text_size(px(12.5))
+                                .text_color(TEXT_1)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(BG_HOVER))
+                                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.start_dir_picker(cx);
+                                }))
+                                .child("📁 选择目录…"),
+                        )
+                        .child(div().text_size(px(11.)).text_color(TEXT_3).child("或输入路径："))
                         .child(
                             div().flex().gap_2()
                                 .child(

@@ -6,10 +6,13 @@
 
 mod app;
 #[cfg(test)]
+mod fs_menu_tests;
+#[cfg(test)]
 mod interaction_tests;
 mod markdown_view;
 mod msg;
 mod chat_view;
+mod context_menu;
 mod file_explorer;
 mod runtime;
 mod session_ops;
@@ -28,7 +31,17 @@ use gpui::{
 actions!(desktop, [Quit]);
 
 fn main() {
-    Application::new().run(|cx: &mut gpui::App| {
+    // macOS 标准行为：关窗保留进程，Dock 图标 reopen（applicationShouldHandleReopen）
+    // 重建窗口——gpui 0.2 经 Application::on_reopen 暴露该回调
+    let app = Application::new();
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            let root = spawn_main_window(cx);
+            root.update(cx, |app, window, cx| focus_composer(app, window, cx)).ok();
+        }
+        cx.activate(true);
+    });
+    app.run(|cx: &mut gpui::App| {
         cx.bind_keys([
             // TextInput 编辑动作
             KeyBinding::new("backspace", ti::Backspace, None),
@@ -67,30 +80,41 @@ fn main() {
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
 
-        let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("MCode Desktop".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let root = cx
-            .open_window(options, |_, cx| {
-                cx.new(|cx| App::new(cx))
-            })
-            .unwrap();
-        // 启动即聚焦 Composer:gpui 的按键 action 只沿焦点路径分发,无焦点时 Enter(Submit)
-        // 根本到不了 TextInput——用户实测"输入后零响应"的根因即此(窗口打开后无任何元素持焦)。
-        root.update(cx, |app, window, cx| {
-            let handle = app.input.read(cx).focus_handle.clone();
-            handle.focus(window);
-        })
-        .ok();
+        // 全局句柄必须先初始化——spawn_main_window 会读写它（曾因缺失导致启动即崩）
+        cx.set_global(MainWindowHandle::default());
+        let root = spawn_main_window(cx);
+        root.update(cx, |app, window, cx| focus_composer(app, window, cx)).ok();
         cx.activate(true);
     });
 }
 
 /// ti 模块别名（KeyBinding 列表内引用 text_input 的动作类型）
 use text_input as ti;
+
+/// 主窗口句柄全局（Dock reopen 重建用）
+#[derive(Default)]
+struct MainWindowHandle(std::cell::RefCell<Option<gpui::WindowHandle<App>>>);
+impl gpui::Global for MainWindowHandle {}
+
+/// 创建主窗口（启动与 Dock reopen 共用）
+fn spawn_main_window(cx: &mut gpui::App) -> gpui::WindowHandle<App> {
+    let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("MCode Desktop".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let root = cx.open_window(options, |_, cx| cx.new(|cx| App::new(cx))).unwrap();
+    cx.global::<MainWindowHandle>().0.borrow_mut().replace(root.clone());
+    root
+}
+
+/// 启动即聚焦 Composer:gpui 的按键 action 只沿焦点路径分发,无焦点时 Enter(Submit)
+/// 根本到不了 TextInput——用户实测"输入后零响应"的根因即此(窗口打开后无任何元素持焦)。
+fn focus_composer(app: &mut App, window: &mut gpui::Window, cx: &mut gpui::Context<App>) {
+    let handle = app.input.read(cx).focus_handle.clone();
+    handle.focus(window);
+}

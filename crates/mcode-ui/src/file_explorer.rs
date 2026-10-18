@@ -42,20 +42,6 @@ fn file_icon(name: &str, is_dir: bool, open: bool) -> &'static str {
     }
 }
 
-/// 右键上下文菜单状态（渲染为绝对定位浮层）
-pub(crate) struct CtxMenu {
-    pub path: PathBuf,
-    pub is_dir: bool,
-    pub x: f32,
-    pub y: f32,
-}
-
-/// 行内重命名弹窗（TextInput 预填当前名）
-pub(crate) struct RenameState {
-    pub path: PathBuf,
-    pub input: gpui::Entity<crate::text_input::TextInput>,
-}
-
 /// 文件树可见行（渲染用）
 pub(crate) struct FsRow {
     pub path: PathBuf,
@@ -286,7 +272,7 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let input = self.rename_input(cx, &name);
-        self.rename_state = Some(RenameState { path, input });
+        self.rename_state = Some(crate::context_menu::RenameState { path, input });
     }
 
     pub(crate) fn confirm_rename(&mut self, cx: &mut Context<App>) {
@@ -442,15 +428,14 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                 cx.notify();
             }))
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
-                    // 右键 = 选中 + 弹上下文菜单（坐标用窗口系，渲染为绝对定位浮层）
+                    // 右键 = 选中 + 弹上下文菜单；坐标/翻折/clamp 统一在 open_context_menu
+                    // （event.position 为窗口坐标，菜单挂窗口根层，菜单位置即鼠标位置）
                     this.fs_selected = Some(rc_path.clone());
                     this.fs_delete_armed = None;
-                    this.context_menu = Some(CtxMenu {
-                        path: rc_path.clone(),
-                        is_dir: rc_path.is_dir(),
-                        x: ev.position.x.to_f64() as f32,
-                        y: ev.position.y.to_f64() as f32,
-                    });
+                    this.open_context_menu(rc_path.clone(), ev.position.x.to_f64() as f32, ev.position.y.to_f64() as f32, {
+                        let vp = window.viewport_size();
+                        (vp.width.to_f64() as f32, vp.height.to_f64() as f32)
+                    }, cx);
                     this.explorer_focus.focus(window);
                     cx.notify();
                 }))
@@ -585,90 +570,12 @@ fn armed_label(armed: &Option<PathBuf>) -> String {
 
 // ---------- 右键菜单 / 重命名弹窗渲染 ----------
 
-/// 右键菜单浮层（全屏遮罩捕获点击关闭 + 绝对定位菜单面板）
-pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
-    let menu = app.context_menu.as_ref()?;
-    let is_dir = menu.is_dir;
-    let path = menu.path.clone();
-    let x = px(menu.x.min(1020.));
-    let y = px(menu.y.min(700.));
-
-    let menu_panel = div()
-        .absolute()
-        .left(x)
-        .top(y)
-        .w(px(158.))
-        .rounded_md()
-        .border_1()
-        .border_color(BORDER_STRONG)
-        .bg(BG_PANEL)
-        .py_1()
-        .flex()
-        .flex_col()
-        .shadow_lg()
-        .child(menu_item("✏️ 重命名", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            let p = path.clone();
-            this.open_rename(p, cx);
-            this.context_menu = None;
-            cx.notify();
-        })))
-        .child(menu_item("🗑 删除（二次确认）", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.fs_delete();
-            this.context_menu = None;
-            cx.notify();
-        })))
-        .child(menu_item("⧉ 复制", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.fs_copy_entry(false);
-            this.context_menu = None;
-            cx.notify();
-        })))
-        .child(menu_item("✂ 剪切", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            this.fs_copy_entry(true);
-            this.context_menu = None;
-            cx.notify();
-        })));
-
-    let menu_panel = if is_dir {
-        menu_panel
-            .child(menu_item("📋 粘贴到此处", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_paste();
-                this.context_menu = None;
-                cx.notify();
-            })))
-            .child(menu_item("＋ 新建文件", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_new(false);
-                this.context_menu = None;
-                cx.notify();
-            })))
-            .child(menu_item("＋ 新建目录", cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_new(true);
-                this.context_menu = None;
-                cx.notify();
-            })))
-    } else {
-        menu_panel
-    };
-
-    let overlay = div()
-        .absolute()
-        .inset_0()
-        .top_0()
-        .left_0()
-        .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
-            this.context_menu = None;
-            cx.notify();
-        }))
-        .child(menu_panel);
-
-    Some(overlay.into_any_element())
-}
-
 /// 重命名弹窗（居中小卡：TextInput 预填 + 确认/取消）
 pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
     let input = app.rename_state.as_ref()?.input.clone();
     let overlay = div()
         .absolute()
-        .inset_0()
+        .size_full()
         .top_0()
         .left_0()
         .bg(gpui::hsla(0., 0., 0., 0.5))
@@ -697,10 +604,7 @@ pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Optio
                         .child(input),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_2()
+                    div().flex().justify_end().gap_2()
                         .child(
                             div()
                                 .id("btn-rename-cancel")
@@ -741,23 +645,6 @@ pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Optio
     Some(overlay.into_any_element())
 }
 
-/// 菜单项（悬停高亮）
-fn menu_item(
-    label: &str,
-    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(SharedString::from(format!("menu-{}", label)))
-        .px_3()
-        .py_1p5()
-        .text_size(px(12.))
-        .text_color(TEXT_1)
-        .cursor_pointer()
-        .hover(|s| s.bg(BG_HOVER))
-        .on_click(on_click)
-        .child(label.to_string())
-}
-
 // ---------- 文件树扫描（App 扫 cwd：深度 3，跳重目录，上限 600；@ 补全 respect show_hidden） ----------
 
 pub(crate) fn scan_file_tree(cwd: &PathBuf, show_hidden: bool) -> Vec<String> {
@@ -794,3 +681,4 @@ fn walk_dir(
         }
     }
 }
+
