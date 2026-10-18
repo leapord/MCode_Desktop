@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! OpenAI Responses API 客户端 — 唯一协议（对齐 MCode.md 1.5 与 CLI api/client.ts），SSE 流式。
 //! 实现 `agent::ModelBackend`。无请求级超时（只有用户打断能终止长生成）。
 

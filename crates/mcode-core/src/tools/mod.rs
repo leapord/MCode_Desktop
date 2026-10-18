@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 工具体系 — 对齐 MCode.md 3.1：工作区路径收敛（防逃逸）+ diff 产出 + 注册表。
 
 pub mod builtin;

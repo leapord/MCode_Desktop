@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! config.json — 唯一事实源，与 CLI 版逐字段互通（对齐 mcode/src/config/config.ts）。
 //! 桌面扩展配置（权限规则 / MCP / hooks）放 ~/.mcode/desktop.json，不污染 CLI 互操作面。
 

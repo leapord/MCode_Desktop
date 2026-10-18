@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 交互场景测试矩阵（M2 全接线回归）— gpui TestAppContext（#[gpui::test]）无头驱动 App 状态机：
 //! 直接调 send()/on_ui_event()/interrupt()（按键级 IME 路径不在本矩阵范围），
 //! MockBackend 按调用序脚本化返回，事件经 take_rx 的 channel 由测试泵回 on_ui_event。

@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! Subagent 体系 — 对齐 CLI agent/subagent.ts：
 //! task 工具派发独立上下文的子 agent，事件带 scope 冒泡回 UI。
 

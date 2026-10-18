@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 内置工具 — 对齐 MCode.md 3.1：read_file / write_file / edit_file / bash / glob / grep
 
 use super::{

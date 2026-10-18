@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 系统提示词组装（对齐 CLI agent/context.ts）+ MCODE.md 记忆加载 + goal 提示词
 
 use crate::config::{Config, Language};

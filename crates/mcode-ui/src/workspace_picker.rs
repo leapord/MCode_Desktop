@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 启动工作区选择器 — IDEA 式首屏：最近打开（desktop.json recentWorkspaces，
 //! 最近在前、上限 8、选中置顶去重）+ 打开其他目录（绝对路径输入，~ 展开，is_dir 校验）。
 //! 选定后：cwd → 记录 recent → 重扫 file_tree（respect show_hidden）→ rebuild_harness → 刷侧栏 → 进 Chat。

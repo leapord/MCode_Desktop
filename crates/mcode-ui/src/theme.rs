@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 主题 — 颜色语义 1:1 对齐 desktop-prototype/css/app.css 设计令牌
 //! rgb() 在 gpui 0.2 非 const fn，故用结构体字面量保持 const
 

@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! MCP 客户端 — stdio transport（newline-delimited JSON-RPC 2.0）。
 //! 对齐原型 extensions.html 的设计口径：MCP 工具自动转成 ToolDefinition 挂进 registry，
 //! 与内置工具同一权限门控（is_read_only=false → 经 PermissionManager 裁决）。

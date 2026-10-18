@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 运行时桥接 — tokio 后台线程跑 harness，GPUI 主线程经 channel 收事件。
 //! UI 事件流统一为 UiEvent（Agent 事件 + 权限确认请求），单泵转发进 GPUI 实体。
 

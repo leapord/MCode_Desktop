@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 会话持久化 — 对齐 MCode.md 5.1：JSONL 消息流 + meta + resume + rewind 检查点
 
 use anyhow::Result;

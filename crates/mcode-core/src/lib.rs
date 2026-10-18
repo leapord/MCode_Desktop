@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! mcode-core — MCode_Desktop 的 Rust 内核
 //!
 //! 能力对齐 `mcode` CLI（Node/TS 版）的完整能力面：

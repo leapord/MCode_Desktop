@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 主应用实体 — 全接线（M2）：真实流式回合（run_agent_turn）、权限弹窗真裁决（Confirm 通道）、
 //! /goal 外层循环（check_goal_complete 裁判）、会话持久化（SessionStore）、指令系统。
 //! 渲染分发在 views.rs（四视图）与 chat_view.rs（chat 布局），指令与会话操作在 session_ops.rs。

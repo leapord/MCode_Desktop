@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 权限门控 — 四模式对齐 CLI permission/manager.ts（MCode.md 3.4）
 
 use serde::{Deserialize, Serialize};

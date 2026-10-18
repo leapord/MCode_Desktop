@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! ComposerInput — 移植自 gpui 0.2.2 examples/input.rs（Apache-2.0，保留原实现结构）
 //! 新增：Enter 提交事件（InputEvent::Submit）与暗色主题适配。
 

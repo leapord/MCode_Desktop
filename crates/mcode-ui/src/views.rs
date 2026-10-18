@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 页面视图 — Settings / Extensions / Sessions / Onboarding 四视图渲染
 //! （chat 布局在 chat_view.rs；文件超 800 行时按规格拆分）。
 //! 布局规范 = docs/prototype/screens/{settings,extensions,sessions,onboarding}.html。

@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 指令系统与会话操作 — slash 指令本地解释（不进模型回合）、会话列表/恢复、
 //! 设置类操作（模型/语言/模式/PUA 切换并重建 harness）、快照导出。
 

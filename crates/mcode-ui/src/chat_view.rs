@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! chat 布局渲染 — 布局规范 = docs/prototype/screens/chat.html：
 //! 侧栏（会话/占用）+ 顶栏（模型/路径/模式/goal 徽章）+ 消息流（工具卡/diff/Notice）+ Composer。
 //! 共享渲染小件（badge / tool_icon）也在这里，供 views.rs 的页面视图复用。

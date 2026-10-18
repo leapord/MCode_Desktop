@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! @ 文件引用展开 — 对齐 CLI util/file-refs.ts：
 //! 文本文件注入为带注释内容块，图片（multimodal 模型）转为 data URL 附件。
 

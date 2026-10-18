@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! hooks 引擎 — 工具执行生命周期钩子（PreToolUse / PostToolUse / Stop）。
 //! 规则来源：~/.mcode/desktop.json + <project>/.mcode/desktop.json（项目覆盖同名匹配，全部生效）。
 //! 约定：PreToolUse 退出码 2 = 拒绝（stdout 作为拒绝理由）；其余退出码仅记录不阻断；

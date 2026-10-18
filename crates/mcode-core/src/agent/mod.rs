@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! Agent harness — compact-harness 模式（对齐 MCode.md 1.2/4.3 与 CLI agent/loop.ts）：
 //! context（系统提示词组装）/ history（消息管理）/ compaction（阈值压缩）/ 主循环编排。
 //!

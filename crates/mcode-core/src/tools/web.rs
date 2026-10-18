@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 网络工具 — webfetch / websearch（对齐 CLI tools/webfetch.ts + websearch.ts）
 
 use super::{clamp_output, Tool, ToolContext, ToolDefinition, ToolResult};

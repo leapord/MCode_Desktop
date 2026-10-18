@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 补全状态机 — 1:1 移植自 CLI/desktop-prototype 的 CompletionState 设计（MCode.md 2.2）
 //!
 //! 纯逻辑、无 UI 依赖：`/` 与 `@` 触发、过滤、↑↓ 循环、tab 补全、Esc 关闭。

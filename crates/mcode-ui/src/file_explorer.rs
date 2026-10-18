@@ -1,3 +1,7 @@
+// MCode_Desktop — AI coding agent desktop app
+// Copyright (c) 2026 Materin-tech. All rights reserved.
+// SPDX-License-Identifier: MIT
+
 //! 工作区文件浏览器 — VS Code 式三栏布局的右栏：
 //! 懒加载文件树（read_dir 逐层展开）+ 选中态 + 文件级剪贴板（cmd-c/x/v）+
 //! 新建文件/目录 + 删除二次确认。所有路径经工作区校验，操作后刷新补全 file_tree。
