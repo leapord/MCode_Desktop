@@ -133,7 +133,7 @@ impl ModelBackend for ScriptMock {
 
 // ---------- 测试环境搭建 ----------
 
-fn test_config() -> Config {
+pub(crate) fn test_config() -> Config {
     Config {
         pua_always_on: false,
         language: Default::default(),
@@ -169,11 +169,16 @@ pub(crate) fn turn(reply: &str) -> Step {
     Step::Turn(StreamTurn { reply: reply.into(), ..Default::default() })
 }
 
-pub(crate) fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx {
+pub(crate) fn make_temp_dir() -> PathBuf {
     let n = DIR_SEQ.fetch_add(1, Ordering::SeqCst);
     let tmp = std::env::temp_dir().join(format!("mcode-ui-test-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
+    tmp
+}
+
+fn setup_backend(cx: &mut TestAppContext, backend: Arc<dyn ModelBackend>) -> Ctx {
+    let tmp = make_temp_dir();
     let app = cx.new(|cx| App::new_for_test(cx));
     app.update(cx, |a, _cx| {
         a.cfg = test_config();

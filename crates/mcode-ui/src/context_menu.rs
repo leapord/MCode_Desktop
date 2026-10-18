@@ -152,6 +152,13 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
         .absolute()
         .left(x)
         .top(y)
+        // 真实事件路由修复：面板吞掉 bubble 的 mouse_down，阻止遮罩先关菜单
+        // （否则菜单在 down→up 之间卸载，on_click 的 down+up 配对落空 → 菜单项点击无效）
+        // 真实事件路由修复：面板吞掉 bubble 的 mouse_down，阻止遮罩先关菜单
+        // （否则菜单在 down→up 之间卸载，on_click 的 down+up 配对落空 → 菜单项点击无效——
+        //   已由 case30 真实事件测试先复现红、后转绿验证）
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
         .rounded_md()
         .border_1()
         .border_color(BORDER_STRONG)
@@ -203,6 +210,7 @@ fn action_item(
     let p = path.to_path_buf();
     div()
         .id(SharedString::from(format!("menu-{}", label)))
+        .debug_selector(move || format!("menuitem-{}", label))
         .w_full()
         .px_3()
         .py_1p5()

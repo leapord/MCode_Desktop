@@ -8,6 +8,8 @@ mod app;
 #[cfg(test)]
 mod fs_menu_tests;
 #[cfg(test)]
+mod real_event_tests;
+#[cfg(test)]
 mod interaction_tests;
 mod markdown_view;
 mod msg;

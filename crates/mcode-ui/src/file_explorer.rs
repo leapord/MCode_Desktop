@@ -404,6 +404,7 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         let depth_px = 8. + r.depth as f32 * 14.;
         div()
             .id(SharedString::from(format!("fs-{}", r.path.display())))
+            .debug_selector(move || format!("fsrow-{}", r.name))
             .flex()
             .items_center()
             .gap_1()
@@ -547,6 +548,7 @@ fn fs_btn(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(SharedString::from(format!("fs-btn-{id}")))
+        .debug_selector(move || format!("fsbtn-{}", id))
         .px_1p5()
         .py_0p5()
         .rounded_sm()
@@ -626,6 +628,7 @@ pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Optio
                         .child(
                             div()
                                 .id("btn-rename-confirm")
+                                .debug_selector(|| "rename-confirm".to_string())
                                 .px_3()
                                 .py_1p5()
                                 .rounded_md()
