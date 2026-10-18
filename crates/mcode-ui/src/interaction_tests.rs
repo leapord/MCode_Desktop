@@ -5,7 +5,7 @@
 use crate::app::{scan_file_tree, App, ChatMsg, View};
 use crate::runtime::{build_harness_with_backend, UiEvent};
 use gpui::{AppContext, Entity, TestAppContext};
-use mcode_core::agent::{ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall};
+use mcode_core::agent::{ApiMessage, AgentEvent, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall};
 use mcode_core::config::{Config, Provider};
 use mcode_core::permission::{Decision, Mode, Verdict};
 use std::path::PathBuf;
@@ -555,4 +555,59 @@ fn watch_isolation() {
         Ok(Ok(1)) => println!("WATCH-ISOLATION-OK"),
         other => println!("WATCH-ISOLATION-FAIL: {other:?}"),
     }
+}
+
+// ---------- 用例 16：思考块默认展开 + 流式累计 ----------
+#[gpui::test]
+async fn case16_thinking_block_streams_expanded(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![turn("done")]);
+    // 直接注入 Reasoning 事件（泵已在事件链路，等价 on_agent_event 路径）
+    c.app.update(cx, |a, cx| {
+        a.on_agent_event(mcode_core::agent::AgentEvent::Reasoning {
+            text: "先读源码".into(),
+            scope: None,
+        }, cx);
+    });
+    c.app.update(cx, |a, cx| {
+        a.on_agent_event(mcode_core::agent::AgentEvent::Reasoning {
+            text: "，再写测试".into(),
+            scope: None,
+        }, cx);
+    });
+    c.app.read_with(cx, |a, _| {
+        let t = a.messages.iter().find_map(|m| match m {
+            ChatMsg::Thinking { text, expanded } => Some((text.clone(), *expanded)),
+            _ => None,
+        });
+        let (text, expanded) = t.expect("无 Thinking 块");
+        assert!(expanded, "默认应展开（thinking_default_expanded=true）");
+        assert_eq!(text, "先读源码，再写测试", "Reasoning 增量未累计");
+    });
+}
+
+// ---------- 用例 17：追加不重置 expanded ----------
+#[gpui::test]
+async fn case17_thinking_append_keeps_expanded_state(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![turn("x")]);
+    c.app.update(cx, |a, cx| {
+        a.on_agent_event(AgentEvent::Reasoning { text: "a".into(), scope: None }, cx);
+    });
+    // 用户手动折叠
+    c.app.update(cx, |a, _| {
+        if let Some(ChatMsg::Thinking { expanded, .. }) = a.messages.last_mut() {
+            *expanded = false;
+        }
+    });
+    c.app.update(cx, |a, cx| {
+        a.on_agent_event(AgentEvent::Reasoning { text: "b".into(), scope: None }, cx);
+    });
+    c.app.read_with(cx, |a, _| {
+        match a.messages.last() {
+            Some(ChatMsg::Thinking { text, expanded }) => {
+                assert!(!*expanded, "追加不应重置折叠状态");
+                assert_eq!(text, "ab", "追加文本丢失");
+            }
+            other => panic!("Thinking 块丢失: {other:?}"),
+        }
+    });
 }

@@ -435,7 +435,7 @@ impl App {
             match m {
                 ChatMsg::User { text, .. } => md.push_str(&format!("## 用户\n\n{text}\n\n")),
                 ChatMsg::Assistant { text } => md.push_str(&format!("## MCode\n\n{text}\n\n")),
-                ChatMsg::Thinking { text } => md.push_str(&format!("> 💭 {}\n\n", crate::app::trunc(text, 200))),
+                ChatMsg::Thinking { text, .. } => md.push_str(&format!("> 💭 {}\n\n", crate::app::trunc(text, 200))),
                 ChatMsg::ToolCard { name, args, summary, .. } => {
                     md.push_str(&format!("- 🔧 {name} `{args}` {summary}\n"))
                 }

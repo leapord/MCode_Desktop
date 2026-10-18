@@ -63,9 +63,10 @@ pub enum ChatMsg {
     Assistant {
         text: SharedString,
     },
-    /// 思考过程（连续 Reasoning 增量合并）
+    /// 思考过程（连续 Reasoning 增量合并；每块独立展开/折叠状态）
     Thinking {
         text: SharedString,
+        expanded: bool,
     },
     /// 工具调用卡片（MCP 工具名为运行时字符串，name 不用 &'static str）
     ToolCard {
@@ -137,6 +138,10 @@ pub struct App {
     /// 上次估算的上下文 token（回合运行中 hist 锁被回合任务持有，渲染用缓存）
     pub(crate) ctx_tokens: usize,
     pub view: View,
+    /// 思考块默认展开（流式实时观察，不合理随时 ESC 打断；对齐 CLI 折叠语义）
+    pub thinking_default_expanded: bool,
+    /// 当前流式思考块的滚动跟随句柄（scroll_to_bottom 每次追加时置位）
+    pub(crate) thinking_scroll: gpui::ScrollHandle,
     // -- 工作区文件浏览器 / 布局 --
     /// 左侧功能区折叠（40px 图标条）
     pub(crate) sidebar_collapsed: bool,
@@ -225,6 +230,8 @@ impl App {
             goal_rounds: 0,
             tokens_total: 0,
             ctx_tokens: 0,
+            thinking_default_expanded: true,
+            thinking_scroll: gpui::ScrollHandle::new(),
             view: if test_mode {
                 View::Chat
             } else if needs_onboarding {
@@ -495,7 +502,7 @@ impl App {
         cx.notify();
     }
 
-    fn on_agent_event(&mut self, ev: AgentEvent, cx: &mut Context<Self>) {
+    pub(crate) fn on_agent_event(&mut self, ev: AgentEvent, cx: &mut Context<Self>) {
         match ev {
             // 文本增量：Running 占位 → Assistant 起步；已有 Assistant 则续写
             AgentEvent::TextDelta(t) => {
@@ -509,13 +516,21 @@ impl App {
                     self.messages.push(ChatMsg::Assistant { text: t.into() });
                 }
             }
-            // 思考增量：连续 Reasoning 合并进最后一个 Thinking 块
+            // 思考增量：连续 Reasoning 合并进最后一个 Thinking 块（保留其展开状态）；
+            // 新块按全局偏好初始化；流式期间滚动跟随到底部
             AgentEvent::Reasoning { text, .. } => {
-                if let Some(ChatMsg::Thinking { text: t }) = self.messages.last_mut() {
+                if let Some(ChatMsg::Thinking { text: t, .. }) = self.messages.last_mut() {
                     *t = format!("{t}{text}").into();
                 } else {
-                    self.messages.push(ChatMsg::Thinking { text: text.into() });
+                    self.messages.push(ChatMsg::Thinking {
+                        text: text.into(),
+                        expanded: self.thinking_default_expanded,
+                    });
                 }
+                if self.thinking_default_expanded {
+                    self.thinking_scroll.scroll_to_bottom();
+                }
+                cx.notify();
             }
             AgentEvent::Retrying { attempt, max, reason } => {
                 self.push_notice(format!("↻ 流式重试 {attempt}/{max}：{reason}"), false);

@@ -38,7 +38,14 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
     });
 
     // 消息流
-    let message_list: Vec<_> = app.messages.iter().map(|m| render_msg(m)).collect();
+    let last_idx = app.messages.len().saturating_sub(1);
+    let scroll = &app.thinking_scroll;
+    let message_list: Vec<_> = app
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| render_msg(i, i == last_idx, m, scroll, cx))
+        .collect();
 
     // 补全面板
     let palette_open = app.completion.is_open() && !app.candidates.is_empty();
@@ -368,7 +375,32 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
 
 // ---------- 消息渲染 ----------
 
-fn render_msg(m: &ChatMsg) -> AnyElement {
+/// 思考块可点击头部（💭 状态词 · 字符数 · ▾/▸，点击切换该块 expanded）
+fn thinking_head(
+    idx: usize,
+    label: SharedString,
+    cx: &mut Context<App>,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(format!("think-head-{idx}")))
+        .flex()
+        .items_center()
+        .px_2()
+        .py_1()
+        .cursor_pointer()
+        .hover(|s| s.bg(BG_HOVER))
+        .text_size(px(11.5))
+        .text_color(TEXT_3)
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            if let Some(ChatMsg::Thinking { expanded, .. }) = this.messages.get_mut(idx) {
+                *expanded = !*expanded;
+                cx.notify();
+            }
+        }))
+        .child(label)
+}
+
+fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandle, cx: &mut Context<App>) -> AnyElement {
     match m {
         ChatMsg::User { text, refs } => div()
             .mb_3()
@@ -399,21 +431,50 @@ fn render_msg(m: &ChatMsg) -> AnyElement {
             .max_w(px(860.))
             .text_color(TEXT_1)
             .child(text.clone()),
-        ChatMsg::Thinking { text } => div()
-            .mb_2()
-            .max_w(px(860.))
-            .rounded_sm()
-            .border_1()
-            .border_color(BORDER)
-            .bg(BG_PANEL)
-            .px_2()
-            .py_1()
-            .text_size(px(11.5))
-            .text_color(TEXT_3)
-            .child(SharedString::from(format!(
-                "💭 思考过程 · {} 字符 · 已折叠",
-                text.chars().count()
-            ))),
+        ChatMsg::Thinking { text, expanded } => {
+            // 头部：💭 + 状态词（流式中“思考中…” / 完成“思考过程”）+ 字符数 + ▾/▸
+            let head: SharedString = format!(
+                "💭 {} · {} 字符 {}",
+                if is_last { "思考中…" } else { "思考过程" },
+                text.chars().count(),
+                if *expanded { "▾" } else { "▸" }
+            )
+            .into();
+            // 30k 截断对齐 CLI
+            let display: SharedString = crate::app::trunc(text, 30_000).into();
+            let base = div()
+                .mb_2()
+                .max_w(px(860.))
+                .rounded_sm()
+                .border_1()
+                .border_color(BORDER)
+                .bg(BG_PANEL);
+            if *expanded {
+                base
+                    .flex()
+                    .flex_col()
+                    .child(thinking_head(idx, head, cx))
+                    .child(
+                        // 展开态：限高 160px 滚动区，流式写入时 scroll_to_bottom 跟随
+                        div()
+                            .id(SharedString::from(format!("think-body-{idx}")))
+                            .mx_2()
+                            .mb_2()
+                            .max_h(px(160.))
+                            .overflow_y_scroll()
+                            .track_scroll(scroll)
+                            .rounded_sm()
+                            .bg(BG_WINDOW)
+                            .p_2()
+                            .font_family("Menlo")
+                            .text_size(px(10.5))
+                            .text_color(TEXT_3)
+                            .child(display),
+                    )
+            } else {
+                base.child(thinking_head(idx, head, cx))
+            }
+        }
         ChatMsg::ToolCard { name, args, summary, running, success } => {
             let (icon, color) = tool_icon(name);
             let status: SharedString = if *running {
