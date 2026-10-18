@@ -216,9 +216,6 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
         .flex_col()
         .bg(BG_MAIN)
         .text_color(TEXT_1)
-        .when_some(perm_overlay, |d, ov| d.child(ov))
-        .when_some(crate::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
-        .when_some(crate::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
         // 顶栏
         .child(
             div()
@@ -378,6 +375,11 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                     d.child(crate::file_explorer::render_file_explorer(app, cx))
                 }),
         )
+        // 浮层必须挂在最后——gpui 按树序绘制，先挂的兄弟会被后画的主内容盖住
+        // （用户实测：右键菜单被文件浏览器面板遮挡）
+        .when_some(perm_overlay, |d, ov| d.child(ov))
+        .when_some(crate::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
+        .when_some(crate::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
         .into_any_element()
 }
 
