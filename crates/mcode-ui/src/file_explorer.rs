@@ -240,6 +240,9 @@ impl App {
             Ok(_) => self.push_notice(format!("✓ 已删除 {}", p.display()), false),
             Err(e) => self.push_notice(format!("✗ 删除失败：{e}"), true),
         }
+        // 清理已删目录的展开状态（含子孙路径）——残留会让同名新建目录继承陈旧展开态
+        self.expanded_dirs
+            .retain(|d| !d.starts_with(&p) && p.starts_with(d) == false);
         self.fs_delete_armed = None;
         self.fs_selected = None;
         self.fs_refresh();
@@ -304,9 +307,22 @@ impl App {
             Ok(_) => {
                 self.push_notice(format!("✓ 已重命名 → {new_name}"), false);
                 if self.fs_selected.as_ref() == Some(&target.to_path_buf()) {
-                    self.fs_selected = Some(dest);
+                    self.fs_selected = Some(dest.clone());
                 }
-                self.expanded_dirs.retain(|d| d != target);
+                // 展开状态迁移到新路径（目录自身 + 全部子孙路径），旧路径不残留
+                self.expanded_dirs = self
+                    .expanded_dirs
+                    .iter()
+                    .map(|d| {
+                        if *d == target {
+                            dest.clone()
+                        } else if d.starts_with(&target) {
+                            dest.join(d.strip_prefix(&target).unwrap_or(d))
+                        } else {
+                            d.clone()
+                        }
+                    })
+                    .collect();
             }
             Err(e) => self.push_notice(format!("✗ 重命名失败：{e}"), true),
         }

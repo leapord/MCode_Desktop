@@ -141,3 +141,103 @@ async fn case32_real_events_copy_toolbar_paste_menu(cx: &mut TestAppContext) {
     );
     cleanup(&tmp);
 }
+
+// ---------- 用例 33：真实事件删除非空目录（用户 v0.1.4 实测失败场景） ----------
+#[gpui::test]
+async fn case33_real_events_delete_directory(cx: &mut TestAppContext) {
+    let (view, tmp, mut cx) = windowed_setup(cx, &[], &["victim_dir"]);
+    // 非空：嵌套子目录 + 文件
+    std::fs::create_dir_all(tmp.join("victim_dir").join("nested")).unwrap();
+    std::fs::write(tmp.join("victim_dir").join("nested").join("f.txt"), "x").unwrap();
+    std::fs::write(tmp.join("victim_dir").join("top.txt"), "y").unwrap();
+    cx.run_until_parked();
+    // ① 先左键展开目录（对齐真实用户操作：浏览过目录内容后再删除）
+    let row = cx.debug_bounds("fsrow-victim_dir").expect("目录行未渲染");
+    click(&mut cx, center(row), MouseButton::Left);
+    cx.run_until_parked();
+    view.update(&mut cx, |a, _| {
+        assert!(
+            a.expanded_dirs.iter().any(|d| d.ends_with("victim_dir")),
+            "前置：目录未展开"
+        );
+    });
+    // ② 右键目录行
+    let row = cx.debug_bounds("fsrow-victim_dir").expect("目录行未渲染");
+    click(&mut cx, center(row), MouseButton::Right);
+    cx.run_until_parked();
+    view.update(&mut cx, |a, _| {
+        let m = a.context_menu.as_ref().expect("目录菜单未打开");
+        assert!(m.is_dir, "菜单未按目录渲染（应有 7 项）");
+    });
+    // ② 两段式删除
+    let del = cx.debug_bounds("menuitem-🗑 删除").expect("删除项未渲染");
+    click(&mut cx, center(del), MouseButton::Left);
+    cx.run_until_parked();
+    view.update(&mut cx, |a, _| {
+        let m = a.context_menu.as_ref().expect("第一次点击后菜单被关闭");
+        assert!(m.delete_armed, "目录删除未武装");
+    });
+    let confirm = cx.debug_bounds("menuitem-🗑 确认删除？").expect("确认删除项未渲染");
+    click(&mut cx, center(confirm), MouseButton::Left);
+    cx.run_until_parked();
+    // ③ 目录从文件系统消失（含嵌套内容）
+    assert!(
+        !tmp.join("victim_dir").exists(),
+        "目录未删除（真实事件下目录删除无效——复现用户 v0.1.4 所见）"
+    );
+    // ④ expanded_dirs 无残留 + 树已刷新（目录不在行集内）
+    view.update(&mut cx, |a, _| {
+        assert!(
+            !a.expanded_dirs.iter().any(|d| d.ends_with("victim_dir")),
+            "expanded_dirs 残留已删目录"
+        );
+        let rows = a.fs_rows();
+        assert!(!rows.iter().any(|r| r.path.ends_with("victim_dir")), "树未刷新，目录仍在行集");
+    });
+    cleanup(&tmp);
+}
+
+// ---------- 用例 34：真实事件目录重命名（含展开状态保持） ----------
+#[gpui::test]
+async fn case34_real_events_rename_directory(cx: &mut TestAppContext) {
+    let (view, tmp, mut cx) = windowed_setup(cx, &[], &["old_dir"]);
+    std::fs::write(tmp.join("old_dir").join("inner.txt"), "i").unwrap();
+    cx.run_until_parked();
+    // 先左键展开目录（模拟用户操作过展开状态）
+    let row = cx.debug_bounds("fsrow-old_dir").expect("目录行未渲染");
+    click(&mut cx, center(row), MouseButton::Left);
+    cx.run_until_parked();
+    view.update(&mut cx, |a, _| {
+        assert!(a.expanded_dirs.iter().any(|d| d.ends_with("old_dir")), "目录未展开");
+    });
+    // 右键 → 重命名 → 弹窗 → 确认
+    click(&mut cx, center(row), MouseButton::Right);
+    cx.run_until_parked();
+    let item = cx.debug_bounds("menuitem-✏️ 重命名").expect("重命名项未渲染");
+    click(&mut cx, center(item), MouseButton::Left);
+    cx.run_until_parked();
+    view.update(&mut cx, |a, cx| {
+        let st = a.rename_state.as_ref().expect("重命名弹窗未出现");
+        assert_eq!(st.input.read(cx).text(), "old_dir");
+        st.input.update(cx, |i, cx| i.set_text("new_dir", cx));
+    });
+    let confirm = cx.debug_bounds("rename-confirm").expect("确认按钮未渲染");
+    click(&mut cx, center(confirm), MouseButton::Left);
+    cx.run_until_parked();
+    assert!(
+        !tmp.join("old_dir").exists() && tmp.join("new_dir").join("inner.txt").exists(),
+        "目录重命名未生效"
+    );
+    // expanded_dirs 已迁移到新路径
+    view.update(&mut cx, |a, _| {
+        assert!(
+            a.expanded_dirs.iter().any(|d| d.ends_with("new_dir")),
+            "展开状态未迁移到新路径"
+        );
+        assert!(
+            !a.expanded_dirs.iter().any(|d| d.ends_with("old_dir")),
+            "旧路径残留 expanded_dirs"
+        );
+    });
+    cleanup(&tmp);
+}
