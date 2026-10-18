@@ -1,131 +1,623 @@
-//! 主界面 — 布局与交互对齐 desktop-prototype/screens/chat.html：
-//! 侧栏（会话/占用）+ 顶栏（模型/路径/模式徽章）+ 消息流（工具卡/diff）+ Composer（/ 与 @ 补全、排队、打断）
+//! 主应用实体 — 全接线（M2）：真实流式回合（run_agent_turn）、权限弹窗真裁决（Confirm 通道）、
+//! /goal 外层循环（check_goal_complete 裁判）、会话持久化（SessionStore）、指令系统。
+//! 渲染分发在 views.rs（四视图）与 chat_view.rs（chat 布局），指令与会话操作在 session_ops.rs。
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, App as GpuiApp, Context, Entity, FocusHandle, Focusable,
-    Render, Rgba, SharedString, Window,
+    actions, prelude::*, App as GpuiApp, Context, Entity, FocusHandle, Focusable, Render,
+    SharedString, Window,
 };
 use mcode_core::agent::completion::{Candidate, CompletionState, InputHistory, Trigger};
-use mcode_core::commands as cmd;
-use mcode_core::permission::{Mode, PermissionManager, Verdict};
+use mcode_core::agent::context::{build_goal_prompt, MAX_GOAL_ROUNDS};
+use mcode_core::config::Config;
+use mcode_core::agent::history::HistoryStore;
+use mcode_core::agent::runner::{run_agent_turn, TurnOpts, MAX_TOOL_TURNS};
+use mcode_core::agent::{AgentEvent, Attachment, Message, Role};
+use mcode_core::permission::{Decision, Mode};
+use mcode_core::sessions::{SessionMeta, SessionStore};
+use mcode_core::tools::DisplayBlock;
+use mcode_core::util::file_refs::{expand_file_refs, extract_refs};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
+use crate::runtime::{event_sink, Harness, UiEvent, UiRuntime};
 use crate::text_input::{InputEvent, TextInput};
-use crate::theme::*;
 
-actions!(app, [CycleMode, PaletteUp, PaletteDown, PaletteComplete, ClosePalette, NewChat, OpenSettings, Interrupt]);
+actions!(
+    app,
+    [
+        CycleMode,
+        PaletteUp,
+        PaletteDown,
+        PaletteComplete,
+        ClosePalette,
+        NewChat,
+        OpenSettings,
+        OpenExtensions,
+        OpenSessions,
+        BackToChat
+    ]
+);
 
-// ---------- 消息视图模型 ----------
+// ---------- 视图与消息视图模型 ----------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Chat,
+    Settings,
+    Extensions,
+    Sessions,
+    Onboarding,
+}
+
+/// 消息流视图模型（对齐 prototype chat.html 的消息形态）
 #[derive(Clone)]
 pub enum ChatMsg {
-    User { text: SharedString, refs: Vec<SharedString> },
-    Assistant { text: SharedString },
-    ToolCard { kind: &'static str, name: &'static str, args: SharedString, status: SharedString },
-    Diff { path: SharedString, lines: Vec<(bool, bool, SharedString)> }, // (add, del, text)
-    Thinking,
+    User {
+        text: SharedString,
+        refs: Vec<SharedString>,
+    },
+    Assistant {
+        text: SharedString,
+    },
+    /// 思考过程（连续 Reasoning 增量合并）
+    Thinking {
+        text: SharedString,
+    },
+    /// 工具调用卡片（MCP 工具名为运行时字符串，name 不用 &'static str）
+    ToolCard {
+        name: SharedString,
+        args: SharedString,
+        summary: SharedString,
+        running: bool,
+        success: bool,
+    },
+    Diff {
+        path: SharedString,
+        lines: Vec<DiffLine>,
+    },
+    Notice {
+        text: SharedString,
+        error: bool,
+    },
+    /// 回合运行占位（finish_run 时移除）
     Running,
 }
 
-pub struct App {
-    focus_handle: FocusHandle,
-    input: Entity<TextInput>,
-    pub mode: Mode,
-    perms: PermissionManager,
-    messages: Vec<ChatMsg>,
-    queue: Vec<String>,
-    running: bool,
-    completion: CompletionState,
-    candidates: Vec<Candidate>,
-    history: InputHistory,
-    pending_permission: Option<(String, String)>,
-    sessions: Vec<(SharedString, SharedString)>,
+#[derive(Clone)]
+pub struct DiffLine {
+    pub add: bool,
+    pub del: bool,
+    pub hunk: bool,
+    pub text: SharedString,
 }
 
-const FILE_TREE: &[&str] = &[
-    "src/", "src/agent/", "src/agent/loop.ts", "src/agent/harness/", "src/agent/harness/compaction.ts",
-    "src/api/client.ts", "src/commands/builtin.ts", "src/config/config.ts", "src/tools/bash.ts",
-    "src/tools/edit-file.ts", "MCode.md", "package.json",
-];
+/// 权限确认弹窗的待裁决请求（respond oneshot 回传 runner）
+pub struct PendingPermission {
+    pub tool: String,
+    pub args_summary: String,
+    pub respond: Option<tokio::sync::oneshot::Sender<Decision>>,
+}
+
+/// App — UI 侧状态 + 内核接线。回合一启动就持 hist 锁推进，UI 线程只 try_lock 只读。
+pub struct App {
+    focus_handle: FocusHandle,
+    /// Composer 输入框
+    pub input: Entity<TextInput>,
+    /// Onboarding 表单输入（名称 / baseURL / apiKeyEnv / models 逗号分隔）
+    pub ob_name: Entity<TextInput>,
+    pub ob_url: Entity<TextInput>,
+    pub ob_key: Entity<TextInput>,
+    pub ob_models: Entity<TextInput>,
+    rt: Arc<UiRuntime>,
+    pub harness: Option<Arc<Harness>>,
+    pub cfg: Config,
+    /// run_agent_turn 消费的历史（回合任务持锁期间 UI 用 try_lock 只读）
+    pub(crate) hist: Arc<Mutex<HistoryStore>>,
+    pub messages: Vec<ChatMsg>,
+    pub(crate) queue: Vec<String>,
+    pub(crate) running: bool,
+    pub(crate) completion: CompletionState,
+    pub(crate) candidates: Vec<Candidate>,
+    pub(crate) history: InputHistory,
+    /// 当前权限模式（缓存；真值在 harness.deps.perms，UI try_lock 读写）
+    pub mode: Mode,
+    pub pending_permission: Option<PendingPermission>,
+    pub sessions: Vec<SessionMeta>,
+    pub session: Option<SessionStore>,
+    pub file_tree: Vec<String>,
+    pub cwd: PathBuf,
+    pub goal: Option<String>,
+    /// goal 外层循环已跑的轮数（/goal clear 时清零）
+    pub goal_rounds: usize,
+    pub tokens_total: u64,
+    /// 上次估算的上下文 token（回合运行中 hist 锁被回合任务持有，渲染用缓存）
+    pub(crate) ctx_tokens: usize,
+    pub view: View,
+}
+
+/// 截断显示文本
+pub(crate) fn trunc(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
 
 impl App {
-    pub fn new(cx: &mut Context<Self>, input: Entity<TextInput>) -> Self {
-        // 种子消息：对齐原型 chat.html 的静态会话内容
-        let messages = vec![
-            ChatMsg::User {
-                text: "看下 client.ts 里图片附件是怎么传给模型的，识别一直失败，帮我对照排查。".into(),
-                refs: vec!["@src/api/client.ts".into(), "@画布/整体规划.png".into()],
-            },
-            ChatMsg::Thinking,
-            ChatMsg::ToolCard { kind: "read", name: "read_file", args: "src/api/client.ts · L1-120".into(), status: "✓ 120 行".into() },
-            ChatMsg::ToolCard { kind: "bash", name: "bash", args: "grep -n \"multimodal\" src/config/config.ts".into(), status: "✓ exit 0".into() },
-            ChatMsg::Diff {
-                path: "src/api/client.ts".into(),
-                lines: vec![
-                    (false, false, "  const parts: Part[] = [{ type: 'text', text: msg.text }]".into()),
-                    (false, true, "-    // BUG: 未检查 model.multimodal，直接拼接 image_url".into()),
-                    (true, false, "+    if (!activeModel.multimodal) {".into()),
-                    (true, false, "+      // 非多模态模型：拒绝图片，回传提示文本".into()),
-                    (true, false, "+      continue".into()),
-                    (false, false, "  }".into()),
-                ],
-            },
-            ChatMsg::ToolCard { kind: "task", name: "task", args: "code-explorer → 独立上下文 · 只读白名单".into(), status: "◌ 运行中".into() },
-            ChatMsg::Assistant { text: "已定位并修复：client.ts:46 拼接图片前没有校验 model.multimodal。非多模态模型的图片附件会被拒绝并降级为文本提示。".into() },
-        ];
-        let cfg = mcode_core::config::Config::load();
-        let mut sessions = vec![];
-        if let Ok(list) = mcode_core::sessions::SessionStore::list(&std::env::current_dir().unwrap_or_default()) {
-            for m in list.iter().take(8) {
-                sessions.push((m.title.clone().into(), format!("{}轮", m.turns).into()));
-            }
-        }
-        if sessions.is_empty() {
-            sessions = vec![
-                ("修复多模态图片识别异常".into(), "12轮".into()),
-                ("three.min.js 加载排查".into(), "08轮".into()),
-                ("/pua:on 全局开启配置".into(), "03轮".into()),
-            ];
-        }
-        let me = Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let cfg = Config::load();
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let input = Self::make_input(cx, "向 MCode 发送消息…  （/ 指令 · @ 文件）");
+        let ob_name = Self::make_input(cx, "如 zhipu / glm / openai");
+        let ob_url = Self::make_input(cx, "https://open.bigmodel.cn/api/paas/v4");
+        let ob_key = Self::make_input(cx, "API key 环境变量名，如 ZHIPU_API_KEY");
+        let ob_models = Self::make_input(cx, "逗号分隔，如 glm-4.7-multimodal,glm-4.7-air");
+        let needs_onboarding = cfg.needs_onboarding();
+        let input_sub = input.clone();
+        let mut me = Self {
             focus_handle: cx.focus_handle(),
-            input: input.clone(),
-            perms: PermissionManager::new(cfg.default_mode, cfg.permission_rules.clone()),
-            mode: cfg.default_mode,
-            messages,
+            input,
+            ob_name,
+            ob_url,
+            ob_key,
+            ob_models,
+            rt: Arc::new(UiRuntime::new().expect("tokio runtime 创建失败")),
+            harness: None,
+            cfg: cfg.clone(),
+            hist: Arc::new(Mutex::new(HistoryStore::default())),
+            messages: vec![],
             queue: vec![],
             running: false,
             completion: CompletionState::default(),
             candidates: vec![],
             history: InputHistory::default(),
+            mode: cfg.default_mode,
             pending_permission: None,
-            sessions,
+            sessions: vec![],
+            session: None,
+            file_tree: scan_file_tree(&cwd),
+            cwd,
+            goal: None,
+            goal_rounds: 0,
+            tokens_total: 0,
+            ctx_tokens: 0,
+            view: if needs_onboarding {
+                View::Onboarding
+            } else {
+                View::Chat
+            },
         };
         // 输入框事件 → 发送 / 补全状态机同步（对齐 prototype 的 useCompletion 链路）
-        cx.subscribe(&input, |this, _, event, cx| match event {
+        cx.subscribe(&input_sub, |this, _, event, cx| match event {
             InputEvent::Submit(text) => this.send(text.clone(), cx),
             InputEvent::Changed(text) => this.sync_completion(text),
         })
         .detach();
+        // 非 onboarding 启动：构建 harness（失败 → Notice 引导去设置，不 panic）
+        if !needs_onboarding {
+            me.rebuild_harness(cx);
+        }
         me
     }
 
-    // ---------- 交互 ----------
+    fn make_input(cx: &mut Context<Self>, placeholder: &str) -> Entity<TextInput> {
+        cx.new(|cx| TextInput {
+            focus_handle: cx.focus_handle(),
+            content: "".into(),
+            placeholder: placeholder.to_string().into(),
+            selected_range: 0..0,
+            selection_reversed: false,
+            marked_range: None,
+            last_layout: None,
+            last_bounds: None,
+            is_selecting: false,
+        })
+    }
+
+    // ---------- harness 生命周期 ----------
+
+    /// 构建 harness 并挂事件泵；失败不 panic（Notice 引导去设置）
+    pub fn rebuild_harness(&mut self, cx: &mut Context<Self>) {
+        self.harness = match crate::runtime::build_harness(&self.cfg, &self.cwd, &self.rt) {
+            Ok(h) => Some(Arc::new(h)),
+            Err(e) => {
+                self.messages.push(ChatMsg::Notice {
+                    text: format!("初始化失败：{e}（cmd-, 打开设置）").into(),
+                    error: true,
+                });
+                None
+            }
+        };
+        if self.harness.is_some() {
+            self.attach_pump(cx);
+        }
+        self.refresh_sessions();
+    }
+
+    /// 挂接 GPUI 事件泵：tokio channel → 主线程实体更新（WeakEntity::update，实体释放即退出）
+    fn attach_pump(&mut self, cx: &mut Context<Self>) {
+        let Some(h) = self.harness.clone() else { return };
+        let Some(mut rx) = h.take_rx() else { return };
+        cx.spawn(async move |this, cx| {
+            while let Some(ev) = rx.recv().await {
+                if this.update(cx, |app, cx| app.on_ui_event(ev, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    // ---------- 发送 / 回合启动 ----------
+
+    /// Composer 提交入口
+    fn send(&mut self, text: String, cx: &mut Context<Self>) {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.completion.close();
+        self.history.push(text.clone());
+        // running 时入队（指令出队时再解释）
+        if self.running {
+            self.queue.push(text);
+            cx.notify();
+            return;
+        }
+        // 指令本地解释，不进模型回合
+        if text.starts_with('/') && self.handle_command(&text, cx) {
+            cx.notify();
+            return;
+        }
+        self.launch_turn(text, cx);
+    }
+
+    /// 启动一次模型回合：@ 引用展开 → 会话落盘 → UI 占位 → spawn run_agent_turn
+    fn launch_turn(&mut self, text: String, cx: &mut Context<Self>) {
+        let mut turn_input = text.clone();
+        let mut attachments = vec![];
+
+        // -- @ 文件引用展开（multimodal 门控在内核 expand_file_refs 内） --
+        if text.contains('@') {
+            let multimodal = self
+                .cfg
+                .active_provider()
+                .zip(self.cfg.active_model())
+                .map(|(p, m)| p.is_multimodal(&m))
+                .unwrap_or(false);
+            let r = expand_file_refs(&text, &self.cwd, multimodal);
+            if !r.injected.is_empty() {
+                self.push_notice(format!("📎 已注入 {} 个文件引用", r.injected.len()), false);
+            }
+            if !r.missing.is_empty() {
+                self.push_notice(format!("⚠ 引用未解析：{}", r.missing.join("、")), true);
+            }
+            for (p, url) in r.attachments {
+                attachments.push(Attachment { path: p, data_url: url });
+            }
+            turn_input = r.text;
+        }
+
+        // -- 会话持久化：无会话则创建 + 标题 + User 消息落盘 --
+        if self.session.is_none() {
+            self.session = SessionStore::create(&self.cwd).ok();
+        }
+        if let Some(s) = self.session.as_mut() {
+            s.ensure_title(&text);
+            s.meta.model = self.cfg.active_model().unwrap_or_default();
+            s.meta.mode = self.mode.label().to_string();
+            let m = Message::text(Role::User, turn_input.clone());
+            let _ = s.append_message(&m);
+        }
+
+        // -- UI 消息：User（带 @ 引用 chips）+ Running 占位 --
+        let refs: Vec<SharedString> = extract_refs(&text)
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
+        self.messages.push(ChatMsg::User { text: text.into(), refs });
+        self.messages.push(ChatMsg::Running);
+        self.running = true;
+        self.start_turn(turn_input, attachments, cx);
+        cx.notify();
+    }
+
+    /// spawn run_agent_turn（rt 线程：持 hist 锁推进，事件经 ui_tx → 泵回主线程）
+    fn start_turn(&mut self, input: String, attachments: Vec<Attachment>, cx: &mut Context<Self>) {
+        let Some(h) = self.harness.clone() else {
+            self.running = false;
+            self.pop_running();
+            self.push_notice("未初始化完成，无法启动回合（cmd-, 打开设置）".to_string(), true);
+            cx.notify();
+            return;
+        };
+        let _ = h.deps.cancel_tx.send(false);
+        let deps = h.deps.clone();
+        let hist = self.hist.clone();
+        let sink = event_sink(h.ui_tx.clone());
+        let goal = self.goal.clone();
+        self.rt.spawn(async move {
+            let mut hs = hist.lock().await;
+            run_agent_turn(
+                &deps,
+                &input,
+                TurnOpts {
+                    instructions: None,
+                    max_turns: MAX_TOOL_TURNS,
+                    goal,
+                    tools_filter: None,
+                    attachments,
+                    history: &mut hs,
+                    emit: sink,
+                },
+            )
+            .await;
+        });
+        cx.notify();
+    }
+
+    // ---------- goal 外层循环（对齐 CLI cli.tsx runTurn） ----------
+
+    /// spawn goal 完成裁判（独立单发调用，结果经 GoalCheck 事件回主线程）
+    fn spawn_goal_check(&mut self) {
+        let Some(h) = self.harness.clone() else { return };
+        let Some(goal) = self.goal.clone() else { return };
+        let backend = h.deps.backend.clone();
+        let cancel = h.deps.cancel_tx.subscribe();
+        let ui_tx = h.ui_tx.clone();
+        self.rt.spawn(async move {
+            let done = mcode_core::agent::context::check_goal_complete(backend.as_ref(), &goal, cancel).await;
+            let _ = ui_tx.send(UiEvent::GoalCheck(done));
+        });
+    }
+
+    /// goal 裁判结果：达成 → 收官 + drain 队列；未达成 → 以 goal prompt 再开一轮。
+    /// 回合已被打断/出错收尾时，裁判结果是陈旧事件，直接丢弃。
+    fn on_goal_check(&mut self, done: bool, cx: &mut Context<Self>) {
+        if !self.running || self.goal.is_none() {
+            return;
+        }
+        let goal = self.goal.clone().unwrap_or_default();
+        if done {
+            self.push_notice("🎯 goal 已达成".to_string(), false);
+            self.goal = None;
+            self.goal_rounds = 0;
+            self.finish_run(cx);
+        } else if self.goal_rounds >= MAX_GOAL_ROUNDS {
+            self.push_notice(
+                format!("🎯 goal 已达 {MAX_GOAL_ROUNDS} 轮上限，循环终止"),
+                true,
+            );
+            self.goal = None;
+            self.goal_rounds = 0;
+            self.finish_run(cx);
+        } else {
+            self.goal_rounds += 1;
+            self.push_notice(format!("🎯 goal 第 {} 轮", self.goal_rounds), false);
+            let prompt = build_goal_prompt(&goal);
+            self.start_turn(prompt, vec![], cx);
+        }
+    }
+
+    // ---------- 内核事件处理 ----------
+
+    /// 事件泵入口：Agent 事件 / 权限确认 / goal 裁判
+    fn on_ui_event(&mut self, ev: UiEvent, cx: &mut Context<Self>) {
+        match ev {
+            UiEvent::Agent(e) => self.on_agent_event(e, cx),
+            UiEvent::Confirm(req) => {
+                self.pending_permission = Some(PendingPermission {
+                    tool: req.tool,
+                    args_summary: req.args_summary,
+                    respond: Some(req.respond),
+                });
+            }
+            UiEvent::GoalCheck(done) => self.on_goal_check(done, cx),
+        }
+        cx.notify();
+    }
+
+    fn on_agent_event(&mut self, ev: AgentEvent, cx: &mut Context<Self>) {
+        match ev {
+            // 文本增量：Running 占位 → Assistant 起步；已有 Assistant 则续写
+            AgentEvent::TextDelta(t) => {
+                if let Some(last) = self.messages.last_mut() {
+                    match last {
+                        ChatMsg::Running => *last = ChatMsg::Assistant { text: t.into() },
+                        ChatMsg::Assistant { text } => *text = format!("{text}{t}").into(),
+                        _ => self.messages.push(ChatMsg::Assistant { text: t.into() }),
+                    }
+                } else {
+                    self.messages.push(ChatMsg::Assistant { text: t.into() });
+                }
+            }
+            // 思考增量：连续 Reasoning 合并进最后一个 Thinking 块
+            AgentEvent::Reasoning { text, .. } => {
+                if let Some(ChatMsg::Thinking { text: t }) = self.messages.last_mut() {
+                    *t = format!("{t}{text}").into();
+                } else {
+                    self.messages.push(ChatMsg::Thinking { text: text.into() });
+                }
+            }
+            AgentEvent::Retrying { attempt, max, reason } => {
+                self.push_notice(format!("↻ 流式重试 {attempt}/{max}：{reason}"), false);
+            }
+            // 工具卡起步：push 卡片（结果事件按"最后一个同名 running 卡"回填）
+            AgentEvent::ToolStart { name, args, .. } => {
+                self.messages.push(ChatMsg::ToolCard {
+                    name: name.into(),
+                    args: trunc(&args.to_string(), 200).into(),
+                    summary: "".into(),
+                    running: true,
+                    success: false,
+                });
+            }
+            // 工具卡收尾：回填状态 + display 块展开为 Diff/Notice 消息
+            AgentEvent::ToolResult {
+                name,
+                success,
+                output,
+                display,
+                ..
+            } => {
+                let summary = trunc(&output, 60);
+                if let Some(card) = self
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .find(|m| matches!(m, ChatMsg::ToolCard { name: n, running: true, .. } if n.as_ref() == name.as_str()))
+                {
+                    if let ChatMsg::ToolCard { summary: s, running, success: ok, .. } = card {
+                        *s = summary.into();
+                        *running = false;
+                        *ok = success;
+                    }
+                }
+                match display {
+                    Some(DisplayBlock::Diff { path, lines }) => {
+                        let mapped = lines
+                            .iter()
+                            .map(|l| DiffLine {
+                                add: l.kind == mcode_core::tools::DiffKind::Add,
+                                del: l.kind == mcode_core::tools::DiffKind::Delete,
+                                hunk: l.kind == mcode_core::tools::DiffKind::Hunk,
+                                text: l.text.clone().into(),
+                            })
+                            .collect();
+                        self.messages.push(ChatMsg::Diff { path: path.into(), lines: mapped });
+                    }
+                    Some(DisplayBlock::Output { stdout, stderr, code }) => {
+                        let mut text = stdout;
+                        if !stderr.is_empty() {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(&stderr);
+                        }
+                        if !text.trim().is_empty() {
+                            self.push_notice(
+                                format!("▸ {name} · exit {code}\n{}", trunc(text.trim(), 400)),
+                                false,
+                            );
+                        }
+                    }
+                    Some(DisplayBlock::FileRef { path, lines }) => {
+                        if !lines.trim().is_empty() {
+                            self.push_notice(format!("📄 {path}\n{}", trunc(lines.trim(), 400)), false);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            // 用量累计：tokens_total + 会话 meta 同步
+            AgentEvent::Usage(u) => {
+                self.tokens_total += u.input + u.output;
+                if let Some(s) = self.session.as_mut() {
+                    s.meta.tokens_total = self.tokens_total;
+                }
+            }
+            AgentEvent::Compacted { note } => {
+                self.push_notice(format!("🗜 已压缩历史：{note}"), false);
+            }
+            // 回合收尾：goal 激活时优先推进 goal 循环（queue 等 goal 结束再消化）
+            AgentEvent::Done { reply } => {
+                if !reply.is_empty() && !matches!(self.messages.last(), Some(ChatMsg::Assistant { .. })) {
+                    self.messages.push(ChatMsg::Assistant { text: reply.clone().into() });
+                }
+                if !reply.is_empty() {
+                    if let Some(s) = self.session.as_mut() {
+                        let m = Message::text(Role::Assistant, reply.clone());
+                        let _ = s.append_message(&m);
+                        s.meta.turns += 1;
+                    }
+                }
+                if self.goal.is_some() && !reply.is_empty() {
+                    self.spawn_goal_check();
+                } else {
+                    if self.goal.is_some() {
+                        self.push_notice("🎯 goal 循环已终止（回合被打断或出错）".to_string(), false);
+                        self.goal = None;
+                        self.goal_rounds = 0;
+                    }
+                    self.finish_run(cx);
+                }
+                self.refresh_ctx();
+            }
+            AgentEvent::Error { message } => {
+                self.push_notice(format!("✗ {message}"), true);
+                self.finish_run(cx);
+            }
+        }
+    }
+
+    // ---------- 回合收尾 / 队列 / 打断 / 权限 ----------
+
+    /// 回合收尾：移除 Running 占位，队列非空则出队启动下一轮
+    fn finish_run(&mut self, cx: &mut Context<Self>) {
+        self.pop_running();
+        self.running = false;
+        if let Some(next) = self.queue.first().cloned() {
+            self.queue.remove(0);
+            self.launch_turn(next, cx);
+        }
+    }
+
+    fn pop_running(&mut self) {
+        if matches!(self.messages.last(), Some(ChatMsg::Running)) {
+            self.messages.pop();
+        }
+    }
+
+    /// ESC：关补全 → 拒绝待裁决权限 → 打断回合 → 返回 Chat 视图
+    pub(crate) fn interrupt(&mut self, _cx: &mut Context<Self>) {
+        if self.completion.is_open() {
+            self.completion.close();
+            return;
+        }
+        if let Some(p) = self.pending_permission.as_mut() {
+            if let Some(tx) = p.respond.take() {
+                let _ = tx.send(Decision::Deny);
+            }
+            self.pending_permission = None;
+            return;
+        }
+        if self.running {
+            if let Some(h) = &self.harness {
+                let _ = h.deps.cancel_tx.send(true);
+            }
+            return;
+        }
+        if self.view != View::Chat {
+            self.view = View::Chat;
+        }
+    }
+
+    /// 权限弹窗裁决：respond oneshot 回传 runner（AllowAlways 的沉淀在 runner 内）
+    pub(crate) fn resolve_permission(&mut self, decision: Decision, cx: &mut Context<Self>) {
+        if let Some(p) = self.pending_permission.take() {
+            if let Some(tx) = p.respond {
+                let _ = tx.send(decision);
+            }
+        }
+        cx.notify();
+    }
+
+    // ---------- 补全状态机 ----------
 
     fn sync_completion(&mut self, text: &str) {
         self.completion.sync_from_input(text);
         if self.completion.is_open() {
             let q = self.completion.query.clone();
             self.candidates = match self.completion.trigger {
-                Some(Trigger::Slash) => cmd::filter_commands(&q)
+                Some(Trigger::Slash) => mcode_core::commands::filter_commands(&q)
                     .into_iter()
                     .map(|c| Candidate { name: c.name.into(), desc: c.desc.into(), is_dir: false })
                     .collect(),
-                Some(Trigger::At) => FILE_TREE
+                Some(Trigger::At) => self
+                    .file_tree
                     .iter()
                     .filter(|f| f.to_lowercase().contains(&q.to_lowercase()))
                     .take(12)
                     .map(|f| Candidate {
-                        name: f.to_string(),
+                        name: f.clone(),
                         desc: String::new(),
                         is_dir: f.ends_with('/'),
                     })
@@ -137,103 +629,6 @@ impl App {
         }
     }
 
-    fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        self.completion.close();
-        self.history.push(text.clone());
-        if self.running {
-            self.queue.push(text);
-            cx.notify();
-            return;
-        }
-        self.messages.push(ChatMsg::User { text: text.clone().into(), refs: vec![] });
-        self.messages.push(ChatMsg::Running);
-        self.running = true;
-
-        // 权限门控演示：manual 模式下非只读工具需要确认（真实门控在内核 PermissionManager::evaluate）
-        if self.mode == Mode::Manual && matches!(self.perms.evaluate("bash", false, "*"), Verdict::Confirm) {
-            self.pending_permission = Some(("bash".into(), "npm test\n\n（manual 模式：非只读工具执行前必须确认）".into()));
-        }
-        // TODO(M2): 接通 mcode-core ResponsesBackend 真实流式回合；
-        // 当前初始化里程碑以静态回复占位验证全链路 UI。
-        self.messages.push(ChatMsg::Assistant {
-            text: "（M2 接通内核）本轮消息已进入 harness 历史与 SessionStore 持久化链路。".into(),
-        });
-        cx.notify();
-    }
-
-    fn finish_run(&mut self) {
-        // 移除 Running 占位
-        if matches!(self.messages.last(), Some(ChatMsg::Running)) {
-            self.messages.pop();
-        }
-        self.running = false;
-        if let Some(next) = self.queue.first().cloned() {
-            self.queue.remove(0);
-            self.messages.push(ChatMsg::User { text: next.into(), refs: vec![] });
-            self.messages.push(ChatMsg::Running);
-            self.running = true;
-        }
-    }
-
-    fn interrupt(&mut self, cx: &mut Context<Self>) {
-        if self.running {
-            self.finish_run();
-            cx.notify();
-        }
-    }
-
-    // ---------- action handlers ----------
-
-    fn on_cycle_mode(&mut self, _: &CycleMode, _: &mut Window, cx: &mut Context<Self>) {
-        self.mode = self.perms.cycle_mode();
-        cx.notify();
-    }
-
-    fn on_palette_up(&mut self, _: &PaletteUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.completion.move_up(self.candidates.len());
-        cx.notify();
-    }
-
-    fn on_palette_down(&mut self, _: &PaletteDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.completion.move_down(self.candidates.len());
-        cx.notify();
-    }
-
-    fn on_palette_complete(&mut self, _: &PaletteComplete, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(c) = self.candidates.get(self.completion.selected).cloned() {
-            let text = self.input.read(cx).text();
-            let new_text = self.completion.apply(&text, &c.name);
-            self.input.update(cx, |inp, cx| inp.set_text(&new_text, cx));
-        }
-        self.completion.close();
-        cx.notify();
-    }
-
-    fn on_close_palette(&mut self, _: &ClosePalette, _: &mut Window, cx: &mut Context<Self>) {
-        self.completion.close();
-        cx.notify();
-    }
-
-    fn on_new_chat(&mut self, _: &NewChat, _: &mut Window, cx: &mut Context<Self>) {
-        self.messages.clear();
-        self.queue.clear();
-        self.running = false;
-        cx.notify();
-    }
-
-    fn on_open_settings(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
-        self.messages.push(ChatMsg::Assistant { text: "设置中心视图（views/settings）— M3 接入".into() });
-        cx.notify();
-    }
-
-    fn on_permission(&mut self, allow: bool, cx: &mut Context<Self>) {
-        if let Some((tool, _)) = self.pending_permission.take() {
-            if allow {
-                self.perms.record(&tool, &mcode_core::Decision::Allow);
-            }
-        }
-        cx.notify();
-    }
 }
 
 impl Focusable for App {
@@ -242,404 +637,39 @@ impl Focusable for App {
     }
 }
 
-// ---------- 渲染 ----------
-
-fn badge(label: impl Into<SharedString>, color: Rgba) -> gpui::Div {
-    div()
-        .px_2()
-        .py_0p5()
-        .rounded_full()
-        .text_size(px(11.))
-        .text_color(color)
-        .border_1()
-        .border_color(color)
-        .child(label.into())
-}
-
-fn tool_icon(kind: &str) -> (&'static str, Rgba) {
-    match kind {
-        "read" => ("📄", BLUE),
-        "bash" => ("▶", YELLOW),
-        "task" => ("⚡", PURPLE),
-        _ => ("✏️", GREEN),
+impl Render for App {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::chat_view::render_app(self, window, cx)
     }
 }
 
-impl Render for App {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mc = mode_color(self.mode);
-        let mode_label: SharedString = format!("⇥ {}", self.mode.label()).into();
+// ---------- 文件树扫描（App 自己扫 cwd：深度 3，跳 .git/target/node_modules，上限 600） ----------
 
-        // 消息流
-        let message_list = self.messages.iter().map(|m| match m {
-            ChatMsg::User { text, refs } => div()
-                .mb_3()
-                .child(
-                    div()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(BORDER)
-                        .bg(BG_PANEL)
-                        .px_3()
-                        .py_2()
-                        .text_color(TEXT_1)
-                        .child(text.clone()),
-                )
-                .children(refs.iter().map(|r| {
-                    div()
-                        .mr_1()
-                        .mt_1()
-                        .px_1p5()
-                        .rounded_sm()
-                        .text_size(px(11.))
-                        .text_color(BLUE)
-                        .child(r.clone())
-                })),
-            ChatMsg::Assistant { text } => div()
-                .mb_3()
-                .text_color(TEXT_1)
-                .child(text.clone()),
-            ChatMsg::Thinking => div()
-                .mb_3()
-                .text_color(TEXT_3)
-                .text_size(px(12.))
-                .child("💭 思考过程 · 已折叠"),
-            ChatMsg::Running => div().mb_3().text_color(ACCENT).child("◌ 运行中…  （ESC 打断）"),
-            ChatMsg::ToolCard { kind, name, args, status } => {
-                let (icon, color) = tool_icon(kind);
-                div()
-                    .mb_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(BORDER)
-                    .bg(BG_PANEL)
-                    .px_3()
-                    .py_1p5()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(12.))
-                    .child(div().text_color(color).child(icon.to_string()))
-                    .child(div().text_color(TEXT_1).child(name.to_string()))
-                    .child(div().text_color(TEXT_3).child(args.clone()))
-                    .child(div().ml_auto().text_color(TEXT_3).child(status.clone()))
-            }
-            ChatMsg::Diff { path, lines } => {
-                let mut wrap = div()
-                    .mb_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(BORDER)
-                    .bg(BG_WINDOW)
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .px_3()
-                            .py_1()
-                            .text_size(px(11.))
-                            .text_color(TEXT_3)
-                            .child(path.clone()),
-                    );
-                for (add, del, text) in lines {
-                    let (bg, fg) = if *add {
-                        (rgb(0x1b2a1e), rgb(0x9fd9a3))
-                    } else if *del {
-                        (rgb(0x2d1b1b), rgb(0xeb9a9a))
-                    } else {
-                        (BG_WINDOW, TEXT_3)
-                    };
-                    wrap = wrap.child(
-                        div().bg(bg).px_3().text_size(px(11.5)).font_family("Menlo").text_color(fg).child(text.clone()),
-                    );
-                }
-                wrap
-            }
-        }).collect::<Vec<_>>();
+fn scan_file_tree(cwd: &PathBuf) -> Vec<String> {
+    let mut out = vec![];
+    walk_dir(cwd, cwd, 0, &mut out);
+    out
+}
 
-        // 补全面板
-        let palette_open = self.completion.is_open() && !self.candidates.is_empty();
-        let palette_items: Vec<_> = self
-            .candidates
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let sel = i == self.completion.selected;
-                div()
-                    .px_3()
-                    .py_1()
-                    .text_size(px(12.))
-                    .flex()
-                    .gap_2()
-                    .when(sel, |d| d.bg(rgb(0x3a2a24)))
-                    .child(div().text_color(if sel { ACCENT } else { TEXT_1 }).font_family("Menlo").child(c.name.clone()))
-                    .when(!c.desc.is_empty(), |d| d.child(div().text_color(TEXT_3).child(c.desc.clone())))
-            })
-            .collect();
-
-        // 排队插话
-        let queue_banner = if !self.queue.is_empty() {
-            div().px_6().pb_1().child(
-                div()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(BLUE)
-                    .text_color(BLUE)
-                    .px_3()
-                    .py_1()
-                    .text_size(px(11.5))
-                    .child(format!("📥 {} 条排队插话", self.queue.len())),
-            )
-        } else {
-            div()
-        };
-
-        // 权限弹窗
-        let perm_overlay = self.pending_permission.as_ref().map(|(tool, args)| {
-            let tool: SharedString = tool.clone().into();
-            let args: SharedString = args.clone().into();
-            div()
-                .absolute()
-                .size_full()
-                .top_0()
-                .left_0()
-                .bg(gpui::hsla(0., 0., 0., 0.55))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .w(px(520.))
-                        .rounded_xl()
-                        .border_1()
-                        .border_color(YELLOW)
-                        .bg(BG_PANEL)
-                        .p_4()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .child(div().text_color(YELLOW).child(SharedString::from(format!("⚠ 权限确认 — manual 模式：{tool}"))))
-                                .child(
-                                    div()
-                                        .rounded_md()
-                                        .bg(BG_WINDOW)
-                                        .p_2()
-                                        .font_family("Menlo")
-                                        .text_size(px(11.5))
-                                        .text_color(TEXT_2)
-                                        .child(args),
-                                )
-                                .child(
-                                    div().flex().gap_2().child(
-                                        div()
-                                            .id("perm-allow")
-                                            .px_3()
-                                            .py_1p5()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(BORDER_STRONG)
-                                            .text_color(TEXT_1)
-                                            .text_size(px(12.))
-                                            .cursor_pointer()
-                                            .hover(|s| s.bg(BG_HOVER))
-                                            .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                                this.on_permission(true, cx);
-                                            }))
-                                            .child("允许（1）"),
-                                    ),
-                                ),
-                        ),
-                )
-        });
-
-        div()
-            .key_context("AppRoot")
-            .track_focus(&self.focus_handle(cx))
-            .on_action(cx.listener(Self::on_cycle_mode))
-            .on_action(cx.listener(Self::on_palette_up))
-            .on_action(cx.listener(Self::on_palette_down))
-            .on_action(cx.listener(Self::on_palette_complete))
-            .on_action(cx.listener(Self::on_close_palette))
-            .on_action(cx.listener(Self::on_new_chat))
-            .on_action(cx.listener(Self::on_open_settings))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(BG_MAIN)
-            .text_color(TEXT_1)
-            .when_some(perm_overlay, |d, ov| d.child(ov))
-            // 顶栏
-            .child(
-                div()
-                    .h_11()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .border_b_1()
-                    .border_color(BORDER)
-                    .bg(BG_MAIN)
-                    .child(badge("🧠 glm-4.7-multimodal", TEXT_2))
-                    .child(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(BORDER)
-                            .bg(BG_PANEL)
-                            .font_family("Menlo")
-                            .text_size(px(11.))
-                            .text_color(TEXT_3)
-                            .child("~/developCode/self/mcode"),
-                    )
-                    .child(
-                        div()
-                            .id("mode-badge")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                this.mode = this.perms.cycle_mode();
-                                cx.notify();
-                            }))
-                            .child(badge(mode_label, mc)),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id("btn-settings")
-                            .cursor_pointer()
-                            .px_2()
-                            .text_size(px(12.))
-                            .text_color(TEXT_2)
-                            .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, _| {}))
-                            .child("⚙ 设置  🧩 扩展"),
-                    ),
-            )
-            // 主体：侧栏 + 消息流
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(
-                        // 侧栏
-                        div()
-                            .w(px(232.))
-                            .flex_shrink_0()
-                            .flex()
-                            .flex_col()
-                            .bg(BG_SIDE)
-                            .border_r_1()
-                            .border_color(BORDER)
-                            .child(
-                                div().px_3().pt_3().child(
-                                    div()
-                                        .id("btn-new")
-                                        .w_full()
-                                        .rounded_md()
-                                        .bg(ACCENT)
-                                        .py_1p5()
-                                        .text_center()
-                                        .text_size(px(12.5))
-                                        .text_color(rgb(0xffffff))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                            this.messages.clear();
-                                            this.queue.clear();
-                                            this.running = false;
-                                            cx.notify();
-                                        }))
-                                        .child("＋ 新建会话"),
-                                ),
-                            )
-                            .child(
-                                div().px_3().pt_3().pb_1().text_size(px(10.5)).text_color(TEXT_3).child("当前目录会话"),
-                            )
-                            .child(
-                                div().px_2().flex().flex_col().children(self.sessions.iter().map(|(t, n)| {
-                                    div()
-                                        .px_2()
-                                        .py_1p5()
-                                        .rounded_sm()
-                                        .text_size(px(12.))
-                                        .text_color(TEXT_2)
-                                        .flex()
-                                        .child(t.clone())
-                                        .child(div().ml_auto().text_color(TEXT_3).text_size(px(10.5)).child(n.clone()))
-                                })),
-                            )
-                            .child(div().flex_1())
-                            .child(
-                                div().mx_3().mb_3().rounded_md().border_1().border_color(BORDER).bg(BG_PANEL).p_2()
-                                    .child(div().flex().justify_between().text_size(px(10.5)).text_color(TEXT_3)
-                                        .child("上下文占用").child("61k / 160k"))
-                                    .child(div().mt_1().h_1().rounded_full().bg(BG_ACTIVE)
-                                        .child(div().w_2_5().h_1().rounded_full().bg(ACCENT)))
-                                    .child(div().mt_1().text_size(px(9.5)).text_color(TEXT_3).child("38% · /context")),
-                            ),
-                    )
-                    .child(
-                        // 主列
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                // 消息滚动区
-                                div()
-                                    .id("messages")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .px_5()
-                                    .py_3()
-                                    .children(message_list),
-                            )
-                            .child(queue_banner)
-                            .child(
-                                // Composer
-                                div().px_5().pb_3()
-                                    .when(palette_open, |d| {
-                                        d.child(
-                                            div()
-                                                .id("palette")
-                                                .rounded_lg()
-                                                .border_1()
-                                                .border_color(BORDER_STRONG)
-                                                .bg(BG_PANEL)
-                                                .overflow_hidden()
-                                                .max_h(px(260.))
-                                                .overflow_y_scroll()
-                                                .children(palette_items),
-                                        )
-                                    })
-                                    .child(
-                                        div()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(BORDER_STRONG)
-                                            .bg(BG_PANEL)
-                                            .overflow_hidden()
-                                            .child(self.input.clone())
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .px_3()
-                                                    .pb_2()
-                                                    .text_size(px(10.5))
-                                                    .text_color(TEXT_3)
-                                                    .child("🖼 附件")
-                                                    .child(div().flex_1())
-                                                    .child("⏎ 发送 · / 指令 · @ 文件 · ⇧Tab 模式 · ESC 打断"),
-                                            ),
-                                    ),
-                            ),
-                    ),
-            )
+fn walk_dir(base: &std::path::Path, dir: &std::path::Path, depth: usize, out: &mut Vec<String>) {
+    if depth >= 3 || out.len() >= 600 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if out.len() >= 600 {
+            return;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if matches!(name.as_str(), ".git" | "target" | "node_modules" | ".mcode") {
+            continue;
+        }
+        let p = e.path();
+        if p.is_dir() {
+            out.push(format!("{}/", e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()));
+            walk_dir(base, &p, depth + 1, out);
+        } else if let Ok(rel) = p.strip_prefix(base) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
     }
 }

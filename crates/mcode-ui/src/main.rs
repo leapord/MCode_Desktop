@@ -1,21 +1,25 @@
 //! MCode_Desktop — GPUI 桌面端入口
 
 mod app;
+mod chat_view;
+mod runtime;
+mod session_ops;
 mod theme;
 mod text_input;
+mod views;
 
 use app::App;
 use gpui::{
     actions, prelude::*, px, size, Application, Bounds, KeyBinding, TitlebarOptions,
     WindowBounds, WindowOptions,
 };
-use text_input::{self as ti, TextInput};
 
 actions!(desktop, [Quit]);
 
 fn main() {
     Application::new().run(|cx: &mut gpui::App| {
         cx.bind_keys([
+            // TextInput 编辑动作
             KeyBinding::new("backspace", ti::Backspace, None),
             KeyBinding::new("delete", ti::Delete, None),
             KeyBinding::new("left", ti::Left, None),
@@ -29,12 +33,16 @@ fn main() {
             KeyBinding::new("home", ti::Home, None),
             KeyBinding::new("end", ti::End, None),
             KeyBinding::new("enter", ti::Submit, None),
+            // 应用动作
             KeyBinding::new("shift-tab", app::CycleMode, None),
             KeyBinding::new("up", app::PaletteUp, None),
             KeyBinding::new("down", app::PaletteDown, None),
             KeyBinding::new("tab", app::PaletteComplete, None),
             KeyBinding::new("escape", app::ClosePalette, None),
             KeyBinding::new("cmd-n", app::NewChat, None),
+            KeyBinding::new("cmd-,", app::OpenSettings, None),
+            KeyBinding::new("cmd-e", app::OpenExtensions, None),
+            KeyBinding::new("cmd-j", app::OpenSessions, None),
             KeyBinding::new("cmd-q", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -49,20 +57,12 @@ fn main() {
             ..Default::default()
         };
         cx.open_window(options, |_, cx| {
-            let input = cx.new(|cx| TextInput {
-                focus_handle: cx.focus_handle(),
-                content: "".into(),
-                placeholder: "向 MCode 发送消息…  （/ 指令 · @ 文件）".into(),
-                selected_range: 0..0,
-                selection_reversed: false,
-                marked_range: None,
-                last_layout: None,
-                last_bounds: None,
-                is_selecting: false,
-            });
-            cx.new(|cx| App::new(cx, input))
+            cx.new(|cx| App::new(cx))
         })
         .unwrap();
         cx.activate(true);
     });
 }
+
+/// ti 模块别名（KeyBinding 列表内引用 text_input 的动作类型）
+use text_input as ti;

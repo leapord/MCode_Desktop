@@ -43,16 +43,28 @@ impl UiRuntime {
 
 /// UI 统一事件流
 pub enum UiEvent {
+    /// agent 回合事件（TextDelta / ToolStart / Done …）
     Agent(AgentEvent),
+    /// 权限确认请求（确认泵从 runner 转发）
     Confirm(ConfirmRequest),
+    /// goal 外层循环裁判结果（true = 已达成）
+    GoalCheck(bool),
 }
 
 /// harness 组装结果：deps 交给回合任务，事件流交给 GPUI 泵
 pub struct Harness {
     pub deps: Arc<AgentDeps>,
     pub ui_tx: tokio::sync::mpsc::UnboundedSender<UiEvent>,
-    pub ui_rx: tokio::sync::mpsc::UnboundedReceiver<UiEvent>,
+    /// UI 事件接收端 — App 经 take_rx 接管（take 后为 None，重复接管安全）
+    rx_slot: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<UiEvent>>>,
     pub mcp_report: Vec<(String, Result<usize>)>,
+}
+
+impl Harness {
+    /// App 接管事件接收端，用于挂接 GPUI 事件泵
+    pub fn take_rx(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<UiEvent>> {
+        self.rx_slot.lock().ok()?.take()
+    }
 }
 
 /// 构建 harness：后端 + 工具注册表（内置/web/skill/task/MCP）+ 权限 + hooks + ledger。
@@ -88,7 +100,7 @@ async fn build_harness_async(cfg: &Config, cwd: &PathBuf) -> Result<Harness> {
         backend,
         registry: registry.clone(),
         perms: Arc::new(tokio::sync::Mutex::new(perms)),
-        ledger: Arc::new(Mutex::new(TokenLedger::default())),
+        ledger: Arc::new(tokio::sync::Mutex::new(TokenLedger::default())),
         hooks: Arc::new(HookEngine::load(cwd)),
         confirm: confirm_tx,
         cancel_tx,
@@ -115,7 +127,7 @@ async fn build_harness_async(cfg: &Config, cwd: &PathBuf) -> Result<Harness> {
         }
     });
 
-    Ok(Harness { deps, ui_tx, ui_rx, mcp_report })
+    Ok(Harness { deps, ui_tx, rx_slot: Mutex::new(Some(ui_rx)), mcp_report })
 }
 
 /// 事件汇：AgentEvent → UI 事件流

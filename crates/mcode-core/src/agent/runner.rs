@@ -5,13 +5,12 @@
 use super::context::{build_system_prompt, SystemPromptOpts};
 use super::history::HistoryStore;
 use super::{
-    AgentEvent, ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall,
-    COMPACT_THRESHOLD_TOKENS,
+    AgentEvent, ApiMessage, Attachment, ModelBackend, StreamEvent, COMPACT_THRESHOLD_TOKENS,
 };
 use crate::hooks::HookEngine;
 use crate::permission::{Decision, PermissionManager, Verdict};
 use crate::tools::{EventSink, ToolContext, ToolRegistry};
-use crate::util::{TokenLedger, TokenUsage};
+use crate::util::TokenLedger;
 use anyhow::Result;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -85,7 +84,7 @@ pub struct TurnOpts<'a> {
 }
 
 /// Agent 回合：返回最终回复文本（空串 = 打断或错误）
-pub async fn run_agent_turn(deps: &Arc<AgentDeps>, user_input: &str, mut opts: TurnOpts<'_>) -> String {
+pub async fn run_agent_turn(deps: &Arc<AgentDeps>, user_input: &str, opts: TurnOpts<'_>) -> String {
     let emit = opts.emit.clone();
 
     // -- 压缩门控（对齐 CLI planCompaction：≥100k 估算 token 触发） --
@@ -390,6 +389,8 @@ fn build_pua_directive(skills: &[crate::skills::Skill]) -> String {
 mod tests {
     use super::*;
     use crate::agent::AgentEvent;
+    use crate::agent::{StreamTurn, ToolCall};
+    use crate::util::TokenUsage;
     use crate::permission::Mode;
     use crate::tools::{noop_sink, ToolResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
