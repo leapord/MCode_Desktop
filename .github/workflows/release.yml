@@ -63,6 +63,7 @@ jobs:
           cd target/release/bundle
           ditto -c -k --sequesterRsrc --keepParent MCode_Desktop.app MCode_Desktop-macos-arm64.zip
           hdiutil create -volname "MCode Desktop" -srcfolder MCode_Desktop.app -ov -fs HFS+ -format UDZO MCode_Desktop-macos-arm64.dmg
+          cp MCode_Desktop-macos-arm64.zip MCode_Desktop-macos-arm64.dmg "$GITHUB_WORKSPACE"/
       - name: Package (Windows)
         if: matrix.kind == 'windows'
         shell: pwsh
@@ -89,7 +90,7 @@ jobs:
           path: |
             MCode_Desktop-*.zip
             MCode_Desktop-*.tar.gz
-            target/release/bundle/*.dmg
+            MCode_Desktop-*.dmg
           if-no-files-found: error
           retention-days: 1
 
