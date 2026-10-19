@@ -148,6 +148,7 @@ pub(crate) fn test_config() -> Config {
             multimodal_models: vec![],
         }],
         default_mode: Mode::Passon,
+        session_retention_days: 90,
     }
 }
 

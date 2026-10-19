@@ -181,7 +181,7 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
         .on_action(cx.listener(|this, _: &crate::app::PaletteComplete, _, cx| {
             if let Some(c) = this.candidates.get(this.completion.selected).cloned() {
                 let text = this.input.read(cx).text();
-                let new_text = this.completion.apply(&text, &c.name);
+                let new_text = this.completion.apply(&text, &c);
                 this.input.update(cx, |inp, cx| inp.set_text(&new_text, cx));
             }
             this.completion.close();

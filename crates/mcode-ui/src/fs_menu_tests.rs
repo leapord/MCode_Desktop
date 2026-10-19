@@ -251,10 +251,12 @@ async fn case29_enter_workspace_updates_recents_and_harness(cx: &mut TestAppCont
     // 会话存储按 cwd 哈希落在 ~/.mcode/projects/<hash>/sessions（与 CLI 互通）
     let sess_dir = mcode_core::util::sessions_dir(&ws);
     std::fs::create_dir_all(&sess_dir).unwrap();
+    // updated 必须是近期时间：90 天保留期外的会话会被 SessionStore::list 过滤
+    let now = chrono::Utc::now().to_rfc3339();
     let meta = serde_json::json!({
         "id": "s1", "title": "t", "cwd": ws.to_string_lossy(),
         "model": "", "mode": "passon",
-        "started": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+        "started": now.clone(), "updated": now,
         "turns": 0, "tokensTotal": 0
     });
     std::fs::write(

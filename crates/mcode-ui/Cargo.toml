@@ -15,11 +15,12 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 pulldown-cmark = { workspace = true }
-mcode-core = { path = "../mcode-core" }
+mcode-core = { workspace = true }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 
 [build-dependencies]
 winresource = "0.1"
