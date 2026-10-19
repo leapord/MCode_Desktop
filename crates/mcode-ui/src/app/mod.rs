@@ -177,6 +177,10 @@ pub struct App {
     pub(crate) context_menu: Option<crate::views::context_menu::CtxMenu>,
     /// 行内重命名弹窗（预填当前名 + 确认/取消）
     pub(crate) rename_state: Option<crate::views::context_menu::RenameState>,
+    /// 会话右键菜单（重命名/删除；与文件右键菜单互斥）
+    pub(crate) session_menu: Option<crate::views::context_menu::SessMenu>,
+    /// 会话重命名弹窗（预填当前标题 + 确认/取消）
+    pub(crate) session_rename: Option<crate::views::context_menu::SessRename>,
     /// 管理/表单对话框（设置与扩展页增删改；None = 关闭）
     pub dialog: Option<Dialog>,
     /// 扩展页缓存：技能与 agent 清单（进入视图或 CRUD 后刷新）
@@ -265,6 +269,8 @@ impl App {
             explorer_focus: cx.focus_handle(),
             context_menu: None,
             rename_state: None,
+            session_menu: None,
+            session_rename: None,
             dialog: None,
             ext_skills: vec![],
             ext_agents: vec![],
@@ -766,6 +772,15 @@ impl App {
 
     /// ESC：关补全 → 拒绝待裁决权限 → 打断回合 → 返回 Chat 视图
     pub(crate) fn interrupt(&mut self, _cx: &mut Context<Self>) {
+        // 顶层浮层优先关闭：会话重命名弹窗 → 会话右键菜单 → 文件重命名弹窗 → 文件右键菜单
+        if self.session_rename.is_some() {
+            self.session_rename = None;
+            return;
+        }
+        if self.session_menu.is_some() {
+            self.session_menu = None;
+            return;
+        }
         if self.rename_state.is_some() {
             self.rename_state = None;
             return;

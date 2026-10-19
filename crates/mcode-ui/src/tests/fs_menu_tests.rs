@@ -282,8 +282,17 @@ async fn case29_enter_workspace_updates_recents_and_harness(cx: &mut TestAppCont
         // cwd 换新
         assert_eq!(a.cwd, ws);
         assert_ne!(a.cwd, before);
-        // 会话列表已按新 cwd 刷新
-        assert_eq!(a.sessions.len(), 1, "sessions 未按新工作区刷新");
+        // 会话列表已按新 cwd 刷新：手写的 s1 + enter_workspace 内 new_chat 立即落盘的新会话
+        assert!(
+            a.sessions.iter().any(|m| m.id == "s1"),
+            "sessions 未按新工作区刷新（s1 缺失）"
+        );
+        assert!(
+            a.session
+                .as_ref()
+                .is_some_and(|s| a.sessions.iter().any(|m| m.id == s.meta.id)),
+            "新工作区的新建会话未立即入列"
+        );
         // harness 已重建且 deps.cwd 指向新工作区
         let h = a.harness.as_ref().expect("harness 未重建");
         assert_eq!(h.deps.cwd, ws);
@@ -324,4 +333,141 @@ fn case35_reveal_command_shape_and_menu_consistency() {
         acts[0],
         crate::views::context_menu::CtxAction::Reveal
     ));
+}
+
+// ---------- 会话右键菜单（用例 36-39）----------
+// 会话存储按 cwd 哈希落 ~/.mcode/projects/<hash>/sessions；测试用唯一 tempdir + 结束清理。
+
+/// 清理测试 cwd 对应的 ~/.mcode/projects/<hash> 目录
+fn cleanup_sessions_dir(cwd: &std::path::Path) {
+    if let Some(hash_dir) = mcode_core::util::sessions_dir(cwd).parent() {
+        let _ = std::fs::remove_dir_all(hash_dir);
+    }
+}
+
+// ---------- 用例 36：新建会话立即入列 + 空会话复用 ----------
+#[gpui::test]
+async fn case36_new_chat_creates_session_immediately(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![]);
+    c.app.update(cx, |a, _cx| {
+        assert!(a.sessions.is_empty(), "前置：无会话");
+        a.new_chat();
+        assert!(a.session.is_some(), "new_chat 未落盘创建会话");
+        assert_eq!(a.sessions.len(), 1, "新建会话未立即出现在列表");
+        // 空会话复用：无完成回合（turns == 0）时再点不重复建，防垃圾条目
+        a.new_chat();
+        assert_eq!(a.sessions.len(), 1, "空会话未复用，重复建条目");
+        // 落盘校验：meta + 空 jsonl 都存在（resume 前提）
+        let id = a.session.as_ref().unwrap().meta.id.clone();
+        let dir = mcode_core::util::sessions_dir(&c.tmp);
+        assert!(dir.join(format!("{id}.meta.json")).exists());
+        assert!(dir.join(format!("{id}.jsonl")).exists());
+    });
+    cleanup_sessions_dir(&c.tmp);
+}
+
+// ---------- 用例 37：会话菜单打开位置 + 与文件菜单互斥 + 边缘翻折 ----------
+#[gpui::test]
+async fn case37_session_menu_position_and_mutex(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![]);
+    c.app.update(cx, |a, cx| {
+        a.new_chat();
+        let id = a.session.as_ref().unwrap().meta.id.clone();
+        // 先开文件右键菜单 + 文件重命名弹窗 → 开会话菜单应互斥关闭
+        a.context_menu = Some(crate::views::context_menu::CtxMenu {
+            path: c.tmp.clone(),
+            is_dir: true,
+            delete_armed: false,
+            x: 0.,
+            y: 0.,
+        });
+        a.open_session_menu(id.clone(), 800., 300., (1920., 1080.), cx);
+        assert!(a.context_menu.is_none(), "会话菜单开 → 文件菜单互斥关闭");
+        assert!(a.session_menu.is_some(), "会话菜单未打开");
+        let m = a.session_menu.as_ref().unwrap();
+        // 视口内坐标 → 菜单坐标 = 右键点
+        assert_eq!((m.x, m.y), (800., 300.));
+        // 边缘翻折：右下角右键 → 菜单收进视口内
+        a.open_session_menu(id.clone(), 1900., 1070., (1920., 1080.), cx);
+        let m = a.session_menu.as_ref().unwrap();
+        assert!(m.x + 170. <= 1920., "菜单右缘超出视口: x={}", m.x);
+        assert!(m.y + 72. <= 1080., "菜单下缘超出视口: y={}", m.y);
+    });
+    cleanup_sessions_dir(&c.tmp);
+}
+
+// ---------- 用例 38：会话重命名（弹窗预填 → 确认 → 磁盘/列表/活动会话三处同步） ----------
+#[gpui::test]
+async fn case38_session_rename_roundtrip(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![]);
+    c.app.update(cx, |a, cx| {
+        a.new_chat();
+        let id = a.session.as_ref().unwrap().meta.id.clone();
+        a.open_session_rename(&id, cx);
+        assert!(a.session_rename.is_some(), "重命名弹窗未打开");
+        // 预填当前标题（新建会话默认「未命名会话」）
+        let prefilled = a
+            .session_rename
+            .as_ref()
+            .unwrap()
+            .input
+            .read(cx)
+            .text()
+            .to_string();
+        assert_eq!(prefilled, "未命名会话");
+        // 改标题并确认
+        a.session_rename
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |i, cx| i.set_text("我的新标题", cx));
+        a.confirm_session_rename(cx);
+        assert!(a.session_rename.is_none(), "确认后弹窗未关闭");
+        // 活动会话内存同步
+        assert_eq!(a.session.as_ref().unwrap().meta.title, "我的新标题");
+        // 列表缓存同步
+        assert_eq!(a.sessions[0].title, "我的新标题");
+        // 磁盘同步
+        let meta_path = mcode_core::util::sessions_dir(&c.tmp).join(format!("{id}.meta.json"));
+        let bytes = std::fs::read(&meta_path).unwrap();
+        let meta: mcode_core::sessions::SessionMeta = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(meta.title, "我的新标题");
+        // 空标题被拒（弹窗已关，标题保持）
+        a.open_session_rename(&id, cx);
+        a.session_rename
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |i, cx| i.set_text("   ", cx));
+        a.confirm_session_rename(cx);
+        assert_eq!(a.session.as_ref().unwrap().meta.title, "我的新标题");
+    });
+    cleanup_sessions_dir(&c.tmp);
+}
+
+// ---------- 用例 39：会话删除两段式（武装 → 确认；文件清单 + 活动指针清理） ----------
+#[gpui::test]
+async fn case39_session_delete_two_phase(cx: &mut TestAppContext) {
+    let c = setup(cx, vec![]);
+    c.app.update(cx, |a, cx| {
+        a.new_chat();
+        let id = a.session.as_ref().unwrap().meta.id.clone();
+        let dir = mcode_core::util::sessions_dir(&c.tmp);
+        a.open_session_menu(id.clone(), 100., 100., (1920., 1080.), cx);
+        // 第一次点删除：仅武装，菜单保持打开，文件还在
+        let closed = a.run_session_action(crate::views::context_menu::SessAction::Delete, &id, cx);
+        assert!(!closed, "首次删除应武装而非执行");
+        assert!(a.session_menu.as_ref().unwrap().delete_armed, "删除未武装");
+        assert!(dir.join(format!("{id}.meta.json")).exists());
+        // 第二次点删除：执行 + 通知关闭
+        let closed = a.run_session_action(crate::views::context_menu::SessAction::Delete, &id, cx);
+        assert!(closed, "二次删除应执行并关闭菜单");
+        // 文件清单全删
+        assert!(!dir.join(format!("{id}.meta.json")).exists());
+        assert!(!dir.join(format!("{id}.jsonl")).exists());
+        // 列表 + 活动指针清理
+        assert!(a.sessions.is_empty(), "列表未刷新");
+        assert!(a.session.is_none(), "删除的是当前会话，活动指针未摘除");
+    });
+    cleanup_sessions_dir(&c.tmp);
 }

@@ -311,7 +311,7 @@ impl App {
 
     // ---------- 重命名（右键菜单 → 行内弹窗） ----------
 
-    fn rename_input(
+    pub(crate) fn rename_input(
         &mut self,
         cx: &mut Context<App>,
         name: &str,
@@ -736,12 +736,19 @@ fn armed_label(armed: &Option<PathBuf>) -> String {
 
 // ---------- 右键菜单 / 重命名弹窗渲染 ----------
 
-/// 重命名弹窗（居中小卡：TextInput 预填 + 确认/取消）
+/// 重命名弹窗（居中小卡：TextInput 预填 + 确认/取消）。
+/// 文件/会话两类重命名共用（状态互斥，同一挂载点渲染）；确认按钮按目标分发。
 pub(crate) fn render_rename_modal(
     app: &mut App,
     cx: &mut Context<App>,
 ) -> Option<gpui::AnyElement> {
-    let input = app.rename_state.as_ref()?.input.clone();
+    // 会话重命名优先（两状态互斥，不会同时存在）
+    let is_session = app.session_rename.is_some();
+    let input = if is_session {
+        app.session_rename.as_ref()?.input.clone()
+    } else {
+        app.rename_state.as_ref()?.input.clone()
+    };
     let overlay = div()
         .absolute()
         .size_full()
@@ -790,6 +797,7 @@ pub(crate) fn render_rename_modal(
                                 .cursor_pointer()
                                 .hover(|s| s.bg(BG_HOVER))
                                 .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.session_rename = None;
                                     this.rename_state = None;
                                     cx.notify();
                                 }))
@@ -807,8 +815,13 @@ pub(crate) fn render_rename_modal(
                                 .text_color(rgb(0xffffff))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(BG_HOVER))
-                                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                    this.confirm_rename(cx);
+                                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                    // 按目标分发：会话标题 → confirm_session_rename；文件名 → confirm_rename
+                                    if is_session {
+                                        this.confirm_session_rename(cx);
+                                    } else {
+                                        this.confirm_rename(cx);
+                                    }
                                     cx.notify();
                                 }))
                                 .child("确认"),

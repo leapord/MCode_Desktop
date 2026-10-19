@@ -492,9 +492,20 @@ async fn case08_clear_and_new_chat_reset_state(cx: &mut TestAppContext) {
     });
     c.app.update(cx, |a, _cx| {
         a.new_chat();
-        assert!(a.messages.len() == 1, "new_chat 缺可见反馈");
+        assert!(a.messages.len() == 1, "new_chat 立即入列缺可见反馈");
         assert!(is_notice(&a.messages[0], "已新建会话"));
+        // 会话立即落盘创建并入列（用户实测反馈：点击新建后列表无新会话）
+        assert!(a.session.is_some(), "new_chat 未落盘创建会话");
+        let cur_id = a.session.as_ref().unwrap().meta.id.clone();
+        assert!(
+            a.sessions.iter().any(|m| m.id == cur_id),
+            "新建会话未立即入列"
+        );
     });
+    // 清理 new_chat 落盘的会话（~/.mcode/projects/<hash>）
+    if let Some(hash_dir) = mcode_core::util::sessions_dir(&c.tmp).parent() {
+        let _ = std::fs::remove_dir_all(hash_dir);
+    }
 }
 
 // ---------- 用例 9：/compact ----------

@@ -826,7 +826,7 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
 pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement {
     let mut root = page_scaffold(
         "🗂 会话列表",
-        "当前目录历史会话 · 点击恢复（/resume）",
+        "当前目录历史会话 · 点击恢复 · 右键重命名/删除（/resume）",
         cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
             this.view = View::Chat;
             cx.notify();
@@ -842,7 +842,7 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
             div()
                 .text_size(px(12.))
                 .text_color(TEXT_3)
-                .child("暂无会话记录（发送第一条消息后自动创建）"),
+                .child("暂无会话记录（点击「新建会话」后立即创建）"),
         );
     }
     root = root.children(app.sessions.iter().map(|m| {
@@ -855,6 +855,7 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
         )
         .into();
         let id = m.id.clone();
+        let rc_id = m.id.clone();
         div()
             .id(SharedString::from(format!("page-sess-{}", m.id)))
             .flex()
@@ -871,6 +872,20 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                 this.resume_session(&id, cx);
             }))
+            // 右键 = 会话右键菜单（重命名/删除）；菜单浮层挂 render_app 顶层，盖住本页
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+                    this.open_session_menu(
+                        rc_id.clone(),
+                        ev.position.x.to_f64() as f32,
+                        ev.position.y.to_f64() as f32,
+                        crate::views::context_menu::window_viewport(window),
+                        cx,
+                    );
+                    cx.notify();
+                }),
+            )
             .child(div().text_size(px(13.)).text_color(TEXT_1).child(title))
             .child(
                 div()

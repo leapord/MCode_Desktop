@@ -29,11 +29,25 @@ pub(crate) fn render_app(app: &mut App, window: &mut Window, cx: &mut Context<Ap
         View::Chat => render_chat(app, window, cx),
         View::WorkspacePicker => crate::views::workspace_picker::render_workspace_picker(app, cx),
     };
+    // 浮层统一挂窗口根层（render_app 顶层）——gpui 按树序绘制，后挂的画在最上
+    // （用户实测：右键浮窗必须展示在最上层；旧实现挂在 render_chat 内部，
+    //   Sessions 等整页视图根本不渲染，且会被管理对话框盖住）
+    // z 序（低 → 高）：页面 → 管理对话框 → 重命名弹窗 → 文件右键菜单 → 会话右键菜单
+    let mut root = div().size_full().relative().child(base);
     // 管理对话框浮层（设置/扩展页增删改表单）叠加在页面之上
     if let Some(dlg) = crate::views::dialogs::render_dialog(app, cx) {
-        return div().size_full().child(base).child(dlg).into_any_element();
+        root = root.child(dlg);
     }
-    base
+    if let Some(m) = crate::views::file_explorer::render_rename_modal(app, cx) {
+        root = root.child(m);
+    }
+    if let Some(m) = crate::views::context_menu::render_context_menu(app, cx) {
+        root = root.child(m);
+    }
+    if let Some(m) = crate::views::context_menu::render_session_menu(app, cx) {
+        root = root.child(m);
+    }
+    root.into_any_element()
 }
 
 fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> AnyElement {
@@ -407,11 +421,9 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                     d.child(crate::views::file_explorer::render_file_explorer(app, cx))
                 }),
         )
-        // 浮层必须挂在最后——gpui 按树序绘制，先挂的兄弟会被后画的主内容盖住
-        // （用户实测：右键菜单被文件浏览器面板遮挡）
+        // 权限弹窗挂最后：按树序绘制保证盖住主内容
+        // （重命名弹窗/右键菜单已上移到 render_app 顶层，全视图可用且盖住管理对话框）
         .when_some(perm_overlay, |d, ov| d.child(ov))
-        .when_some(crate::views::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
-        .when_some(crate::views::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
         .into_any_element()
 }
 

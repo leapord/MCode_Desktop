@@ -93,6 +93,7 @@ pub(crate) fn render_sidebar(app: &mut App, cx: &mut Context<App>) -> gpui::Div 
                     let title: SharedString = trunc(&m.title, 16).into();
                     let meta: SharedString = format!("{}轮", m.turns).into();
                     let id = m.id.clone();
+                    let rc_id = m.id.clone();
                     div()
                         .id(SharedString::from(format!("sess-{}", m.id)))
                         .px_2()
@@ -105,6 +106,20 @@ pub(crate) fn render_sidebar(app: &mut App, cx: &mut Context<App>) -> gpui::Div 
                         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                             this.resume_session(&id, cx);
                         }))
+                        // 右键 = 会话右键菜单（重命名/删除）；菜单浮层挂 render_app 顶层
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+                                this.open_session_menu(
+                                    rc_id.clone(),
+                                    ev.position.x.to_f64() as f32,
+                                    ev.position.y.to_f64() as f32,
+                                    crate::views::context_menu::window_viewport(window),
+                                    cx,
+                                );
+                                cx.notify();
+                            }),
+                        )
                         .flex()
                         .child(title)
                         .child(

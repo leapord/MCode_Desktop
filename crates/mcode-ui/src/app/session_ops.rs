@@ -59,15 +59,22 @@ impl App {
         }
     }
 
-    /// 新建会话：清消息/队列/历史，会话置空（goal 保持）
+    /// 新建会话：清消息/队列/历史（goal 保持）。
+    /// 会话立即落盘创建并出现在列表（用户实测反馈：点击新建后列表无新会话——
+    /// 旧实现 session 置 None，要等首条消息经 launch_turn 才落盘）。
+    /// 防垃圾条目：当前会话没有任何完成回合（turns == 0）时复用，不重复建。
     pub fn new_chat(&mut self) {
         self.messages.clear();
         self.queue.clear();
         if let Ok(mut h) = self.hist.try_lock() {
             h.clear();
         }
-        self.session = None;
         self.running = false;
+        let reuse_empty = self.session.as_ref().is_some_and(|s| s.meta.turns == 0);
+        if !reuse_empty {
+            self.session = SessionStore::create(&self.cwd).ok();
+        }
+        self.refresh_sessions();
         // 可见反馈：空会话下点击「新建会话」也有变化（用户实测反馈）
         self.push_notice("✨ 已新建会话，开始提问吧".to_string(), false);
     }
@@ -100,7 +107,8 @@ impl App {
             "/status" => {
                 self.push_notice(
                     format!(
-                        "MCode Desktop v0.2.0 · 模型 {} · cwd {} · 模式 {} · tokens {}",
+                        "MCode Desktop v{} · 模型 {} · cwd {} · 模式 {} · tokens {}",
+                        env!("CARGO_PKG_VERSION"),
                         self.cfg.active_model().unwrap_or_default(),
                         self.cwd.display(),
                         self.mode.label(),

@@ -81,6 +81,8 @@ impl App {
         self.fs_clipboard = None;
         self.context_menu = None;
         self.rename_state = None;
+        self.session_menu = None;
+        self.session_rename = None;
         self.expanded_dirs.clear();
         self.file_tree = scan_file_tree(&self.cwd, self.show_hidden);
         self.rebuild_harness(cx);
