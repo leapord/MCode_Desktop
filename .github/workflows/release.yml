@@ -4,55 +4,109 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-jobs:
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release -p mcode-ui
-      - shell: pwsh
-        run: |
-          mkdir -p bundle-out
-          cp target/release/MCode_Desktop.exe bundle-out/
-          cp assets/brand/icon.ico bundle-out/MCode_Desktop.ico
-          cp -r assets bundle-out/assets
-          Compress-Archive -Path bundle-out/* -DestinationPath MCode_Desktop-win64.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MCode_Desktop-win64
-          path: MCode_Desktop-win64.zip
+permissions:
+  contents: write
 
-  macos:
-    runs-on: macos-latest
+jobs:
+  build:
+    name: build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS arm64（口径：不提供 x86）
+          - target: aarch64-apple-darwin
+            label: macos-arm64
+            os: macos-14
+            kind: macos
+          # Windows x64 + arm64（arm64 交叉编译，对齐 mcode-cli 成熟模式）
+          - target: x86_64-pc-windows-msvc
+            label: windows-x64
+            os: windows-latest
+            kind: windows
+          - target: aarch64-pc-windows-msvc
+            label: windows-arm64
+            os: windows-latest
+            kind: windows
+          # Linux x64 + arm64（gpui 需 wayland/xkb/fontconfig 头文件）
+          - target: x86_64-unknown-linux-gnu
+            label: linux-x64
+            os: ubuntu-latest
+            kind: linux
+          - target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+            os: ubuntu-24.04-arm
+            kind: linux
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/build-macos.sh
-      - run: |
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Linux system deps (gpui)
+        if: matrix.kind == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev
+      - name: Build (macOS bundle)
+        if: matrix.kind == 'macos'
+        run: ./scripts/build-macos.sh
+      - name: Build (cargo)
+        if: matrix.kind != 'macos'
+        run: cargo build --release -p mcode-ui --target ${{ matrix.target }}
+      - name: Package (macOS)
+        if: matrix.kind == 'macos'
+        run: |
           cd target/release/bundle
           ditto -c -k --sequesterRsrc --keepParent MCode_Desktop.app MCode_Desktop-macos-arm64.zip
           hdiutil create -volname "MCode Desktop" -srcfolder MCode_Desktop.app -ov -fs HFS+ -format UDZO MCode_Desktop-macos-arm64.dmg
+      - name: Package (Windows)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $sub = "target/${{ matrix.target }}/release"
+          $dir = "MCode_Desktop-${{ matrix.label }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/MCode_Desktop.exe" $dir
+          Copy-Item assets/brand/icon.ico $dir/MCode_Desktop.ico
+          Copy-Item assets -Recurse -Destination "$dir/assets"
+          Compress-Archive -Path $dir -DestinationPath "MCode_Desktop-${{ matrix.label }}.zip"
+      - name: Package (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          DIR="MCode_Desktop-${{ matrix.label }}"
+          mkdir -p "$DIR"
+          cp "target/${{ matrix.target }}/release/MCode_Desktop" "$DIR"/
+          cp -r assets "$DIR/assets"
+          cp README.md LICENSE "$DIR"/
+          tar czf "MCode_Desktop-${{ matrix.label }}.tar.gz" "$DIR"
       - uses: actions/upload-artifact@v4
         with:
-          name: MCode_Desktop-macos
+          name: dist-${{ matrix.label }}
           path: |
-            target/release/bundle/MCode_Desktop-macos-arm64.zip
-            target/release/bundle/MCode_Desktop-macos-arm64.dmg
+            MCode_Desktop-*.zip
+            MCode_Desktop-*.tar.gz
+            target/release/bundle/*.dmg
+          if-no-files-found: error
+          retention-days: 1
 
   release:
-    needs: [windows, macos]
-    if: startsWith(github.ref, 'refs/tags/')
+    name: publish release
+    needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
           path: dist
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/MCode_Desktop-* \
+            --title "MCode Desktop $GITHUB_REF_NAME" \
+            --notes "预编译包：macOS arm64（zip+dmg）/ Windows x64+arm64（zip）/ Linux x64+arm64（tar.gz）。内置技能资产随包分发，运行时物化到 ~/.mcode/assets。"
