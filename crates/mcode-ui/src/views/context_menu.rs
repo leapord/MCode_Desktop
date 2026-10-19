@@ -1,11 +1,13 @@
 //! 右键上下文菜单 — 状态（CtxMenu/CtxAction）、动作执行（run_context_action，渲染层与测试共用）、
 //! 浮层渲染（挂在窗口根层；菜单左上角 = 右键点位置，按视口边缘翻折 + 兜底 clamp）。
 
-use gpui::{div, prelude::*, px, Context, InteractiveElement, SharedString, StatefulInteractiveElement};
+use gpui::{
+    Context, InteractiveElement, SharedString, StatefulInteractiveElement, div, prelude::*, px,
+};
 use std::path::{Path, PathBuf};
 
 use crate::app::App;
-use crate::theme::*;
+use crate::views::theme::*;
 
 /// 右键上下文菜单状态（渲染为绝对定位浮层）
 pub(crate) struct CtxMenu {
@@ -33,9 +35,8 @@ pub(crate) enum CtxAction {
 /// 行内重命名弹窗（TextInput 预填当前名）
 pub(crate) struct RenameState {
     pub path: PathBuf,
-    pub input: gpui::Entity<crate::text_input::TextInput>,
+    pub input: gpui::Entity<crate::views::text_input::TextInput>,
 }
-
 
 impl App {
     // ---------- 右键菜单（坐标 clamp + 动作执行，供渲染层与测试直调） ----------
@@ -54,7 +55,11 @@ impl App {
         self.rename_state = None;
         let menu_w = 170.;
         let item_h = 30.;
-        let menu_h = if path.is_dir() { 8. * item_h + 12. } else { 5. * item_h + 12. };
+        let menu_h = if path.is_dir() {
+            8. * item_h + 12.
+        } else {
+            5. * item_h + 12.
+        };
         let margin = 8.;
         let mut mx = x;
         let mut my = y;
@@ -68,7 +73,7 @@ impl App {
         mx = mx.clamp(margin, (viewport.0 - menu_w - margin).max(margin));
         my = my.clamp(margin, (viewport.1 - menu_h - margin).max(margin));
         let is_dir = path.is_dir();
-        self.context_menu = Some(crate::context_menu::CtxMenu {
+        self.context_menu = Some(crate::views::context_menu::CtxMenu {
             path,
             is_dir,
             delete_armed: false,
@@ -81,11 +86,11 @@ impl App {
     /// Delete 两段式：第一次点仅武装（菜单内显示"确认删除？"，菜单保持打开），第二次点执行。
     pub(crate) fn run_context_action(
         &mut self,
-        action: crate::context_menu::CtxAction,
+        action: crate::views::context_menu::CtxAction,
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> bool {
-        use crate::context_menu::CtxAction;
+        use crate::views::context_menu::CtxAction;
         // 菜单动作的作用目标 = 右键路径（fs_* 系列读 fs_selected，先对齐）
         self.fs_selected = Some(path.to_path_buf());
         match action {
@@ -142,18 +147,24 @@ impl App {
             }
         }
     }
-
 }
 
 /// 右键菜单浮层（全屏遮罩捕获点击关闭 + 绝对定位菜单面板，挂在窗口根层）
-pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
+pub(crate) fn render_context_menu(
+    app: &mut App,
+    cx: &mut Context<App>,
+) -> Option<gpui::AnyElement> {
     let menu = app.context_menu.as_ref()?;
     let path = menu.path.clone();
     let x = px(menu.x);
     let y = px(menu.y);
 
     // 删除两段式：第一次点后本菜单内显示红色"确认删除？"
-    let del_label = if menu.delete_armed { "🗑 确认删除？" } else { "🗑 删除" };
+    let del_label = if menu.delete_armed {
+        "🗑 确认删除？"
+    } else {
+        "🗑 删除"
+    };
     let reveal_label: &str = if cfg!(target_os = "windows") {
         "🔎 在 Explorer 中显示"
     } else {
@@ -181,15 +192,23 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
         .flex_col()
         .shadow_lg()
         .child(action_item("✏️ 重命名", CtxAction::Rename, &path, cx))
-        .child(action_item(del_label, CtxAction::Delete, &path, cx)
-            .when(menu.delete_armed, |d| d.text_color(RED).font_weight(gpui::FontWeight::BOLD)))
+        .child(
+            action_item(del_label, CtxAction::Delete, &path, cx).when(menu.delete_armed, |d| {
+                d.text_color(RED).font_weight(gpui::FontWeight::BOLD)
+            }),
+        )
         .child(action_item(reveal_label, CtxAction::Reveal, &path, cx))
         .child(action_item("⧉ 复制", CtxAction::Copy, &path, cx))
         .child(action_item("✂ 剪切", CtxAction::Cut, &path, cx));
 
     let menu_panel = if menu.is_dir {
         menu_panel
-            .child(action_item("📋 粘贴到此处", CtxAction::PasteInto, &path, cx))
+            .child(action_item(
+                "📋 粘贴到此处",
+                CtxAction::PasteInto,
+                &path,
+                cx,
+            ))
             .child(action_item("＋ 新建文件", CtxAction::NewFile, &path, cx))
             .child(action_item("＋ 新建目录", CtxAction::NewDir, &path, cx))
     } else {
@@ -202,22 +221,24 @@ pub(crate) fn render_context_menu(app: &mut App, cx: &mut Context<App>) -> Optio
         .size_full()
         .top_0()
         .left_0()
-        .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
-            // 遮罩点击：复位删除武装态并关闭菜单
-            this.fs_delete_armed = None;
-            this.context_menu = None;
-            cx.notify();
-        }))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                // 遮罩点击：复位删除武装态并关闭菜单
+                this.fs_delete_armed = None;
+                this.context_menu = None;
+                cx.notify();
+            }),
+        )
         .child(menu_panel);
 
     Some(overlay.into_any_element())
 }
 
-
 /// 菜单项（min_w 全宽 + 悬停高亮；点击统一走 run_context_action，返回是否关闭菜单）
 fn action_item(
     label: &str,
-    action: crate::context_menu::CtxAction,
+    action: crate::views::context_menu::CtxAction,
     path: &Path,
     cx: &mut Context<App>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -241,7 +262,6 @@ fn action_item(
         }))
         .child(label.to_string())
 }
-
 
 /// 在系统文件管理器中定位条目：macOS `open -R`（Finder 反显），Windows `explorer /select,`
 pub(crate) fn build_reveal_command(path: &Path) -> std::process::Command {

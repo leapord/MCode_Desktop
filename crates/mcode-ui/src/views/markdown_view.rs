@@ -2,10 +2,10 @@
 //! Assistant 消息走此渲染；User 消息保持纯文本。
 //! 流式期间每帧整段重解析（消息都不长，可接受）。
 
-use gpui::{div, prelude::*, px, Div, FontWeight, SharedString};
+use gpui::{Div, FontWeight, SharedString, div, prelude::*, px};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
-use crate::theme::*;
+use crate::views::theme::*;
 
 // ---------- 中间结构（单测断言目标） ----------
 
@@ -20,12 +20,26 @@ pub(crate) enum MdSpan {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MdBlock {
-    Heading { level: u8, spans: Vec<MdSpan> },
+    Heading {
+        level: u8,
+        spans: Vec<MdSpan>,
+    },
     Paragraph(Vec<MdSpan>),
-    CodeBlock { lang: String, text: String },
-    ListItem { ordered: bool, number: u64, depth: u8, spans: Vec<MdSpan> },
+    CodeBlock {
+        lang: String,
+        text: String,
+    },
+    ListItem {
+        ordered: bool,
+        number: u64,
+        depth: u8,
+        spans: Vec<MdSpan>,
+    },
     Quote(Vec<MdSpan>),
-    Table { header: Vec<String>, rows: Vec<Vec<String>> },
+    Table {
+        header: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
     Rule,
 }
 
@@ -201,7 +215,11 @@ fn collect_spans(events: &[Event], mut i: usize) -> (Vec<MdSpan>, usize) {
                 // 图片降级为链接样式的占位文本（alt 由内部 Text 事件提供）
                 let (inner, next) = collect_spans(events, i + 1);
                 spans.push(MdSpan::Link {
-                    text: if inner.is_empty() { "[图片]".into() } else { flatten_spans(&inner) },
+                    text: if inner.is_empty() {
+                        "[图片]".into()
+                    } else {
+                        flatten_spans(&inner)
+                    },
                     url: dest_url.to_string(),
                 });
                 i = next;
@@ -215,13 +233,13 @@ fn collect_spans(events: &[Event], mut i: usize) -> (Vec<MdSpan>, usize) {
     (spans, i)
 }
 
-
-
 fn flatten_spans(spans: &[MdSpan]) -> String {
     let mut out = String::new();
     for s in spans {
         match s {
-            MdSpan::Text(t) | MdSpan::Bold(t) | MdSpan::Italic(t) | MdSpan::Code(t) => out.push_str(t),
+            MdSpan::Text(t) | MdSpan::Bold(t) | MdSpan::Italic(t) | MdSpan::Code(t) => {
+                out.push_str(t)
+            }
             MdSpan::Link { text, .. } => out.push_str(text),
         }
     }
@@ -243,7 +261,10 @@ fn heading_level(l: HeadingLevel) -> u8 {
 fn span_el(s: &MdSpan) -> Div {
     match s {
         MdSpan::Text(t) => div().child(SharedString::from(t.replace('\n', " "))),
-        MdSpan::Bold(t) => div().font_weight(FontWeight::BOLD).text_color(TEXT_1).child(t.clone()),
+        MdSpan::Bold(t) => div()
+            .font_weight(FontWeight::BOLD)
+            .text_color(TEXT_1)
+            .child(t.clone()),
         MdSpan::Italic(t) => div().italic().child(t.clone()),
         MdSpan::Code(t) => div()
             .font_family("Menlo")
@@ -260,7 +281,13 @@ fn span_el(s: &MdSpan) -> Div {
 }
 
 fn spans_line(spans: &[MdSpan], base_text: gpui::Rgba, base_size: f32) -> Div {
-    let mut row = div().flex().flex_wrap().items_center().gap_1().text_color(base_text).text_size(px(base_size));
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_1()
+        .text_color(base_text)
+        .text_size(px(base_size));
     for s in spans {
         row = row.child(span_el(s));
     }
@@ -307,7 +334,12 @@ fn block_el(b: &MdBlock) -> Div {
             .text_size(px(11.5))
             .text_color(TEXT_2)
             .child(SharedString::from(text.clone())),
-        MdBlock::ListItem { ordered, number, depth, spans } => {
+        MdBlock::ListItem {
+            ordered,
+            number,
+            depth,
+            spans,
+        } => {
             let marker = if *ordered {
                 SharedString::from(format!("{number}."))
             } else {
@@ -318,7 +350,13 @@ fn block_el(b: &MdBlock) -> Div {
                 .gap_1p5()
                 .pl(px(8. + *depth as f32 * 16.))
                 .py_0p5()
-                .child(div().text_color(ACCENT).font_family("Menlo").text_size(px(12.5)).child(marker))
+                .child(
+                    div()
+                        .text_color(ACCENT)
+                        .font_family("Menlo")
+                        .text_size(px(12.5))
+                        .child(marker),
+                )
                 .child(spans_line(spans, TEXT_1, 13.))
         }
         MdBlock::Quote(spans) => div()
@@ -336,22 +374,17 @@ fn block_el(b: &MdBlock) -> Div {
                 .overflow_hidden()
                 .mt_1();
             // 表头（加粗 + 底色）
-            wrap = wrap.child(
+            wrap = wrap.child(div().flex().bg(BG_ACTIVE).children((0..cols).map(|i| {
                 div()
-                    .flex()
-                    .bg(BG_ACTIVE)
-                    .children((0..cols).map(|i| {
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .px_2()
-                            .py_1()
-                            .font_weight(FontWeight::BOLD)
-                            .text_size(px(12.))
-                            .text_color(TEXT_1)
-                            .child(header.get(i).cloned().unwrap_or_default())
-                    })),
-            );
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .py_1()
+                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(12.))
+                    .text_color(TEXT_1)
+                    .child(header.get(i).cloned().unwrap_or_default())
+            })));
             // 数据行（斑马纹 + 行分隔线）
             wrap = wrap.children(rows.iter().enumerate().map(|(ri, row)| {
                 div()
@@ -388,8 +421,14 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                MdBlock::Heading { level: 2, spans: vec![MdSpan::Text("二级标题".into())] },
-                MdBlock::Heading { level: 3, spans: vec![MdSpan::Text("三级标题".into())] },
+                MdBlock::Heading {
+                    level: 2,
+                    spans: vec![MdSpan::Text("二级标题".into())]
+                },
+                MdBlock::Heading {
+                    level: 3,
+                    spans: vec![MdSpan::Text("三级标题".into())]
+                },
             ]
         );
     }
@@ -402,7 +441,10 @@ mod tests {
             blocks,
             vec![MdBlock::Table {
                 header: vec!["工具".into(), "状态".into()],
-                rows: vec![vec!["bash".into(), "✓".into()], vec!["read_file".into(), "✓".into()]],
+                rows: vec![
+                    vec!["bash".into(), "✓".into()],
+                    vec!["read_file".into(), "✓".into()]
+                ],
             }]
         );
     }
@@ -415,7 +457,11 @@ mod tests {
                 assert!(spans.contains(&MdSpan::Bold("加粗".into())));
                 assert!(spans.contains(&MdSpan::Italic("斜体".into())));
                 assert!(spans.contains(&MdSpan::Code("code".into())));
-                assert!(spans.iter().any(|s| matches!(s, MdSpan::Text(t) if t.contains("这是"))));
+                assert!(
+                    spans
+                        .iter()
+                        .any(|s| matches!(s, MdSpan::Text(t) if t.contains("这是")))
+                );
             }
             other => panic!("非段落: {other:?}"),
         }
@@ -426,7 +472,10 @@ mod tests {
         let blocks = parse_markdown("```rust\nfn main() {}\n```");
         assert_eq!(
             blocks,
-            vec![MdBlock::CodeBlock { lang: "rust".into(), text: "fn main() {}\n".into() }]
+            vec![MdBlock::CodeBlock {
+                lang: "rust".into(),
+                text: "fn main() {}\n".into()
+            }]
         );
     }
 
@@ -435,17 +484,37 @@ mod tests {
         let blocks = parse_markdown("- 甲\n- 乙\n1. 第一\n2. 第二");
         let items: Vec<&MdBlock> = blocks.iter().collect();
         assert_eq!(items.len(), 4);
-        assert!(matches!(&blocks[0], MdBlock::ListItem { ordered: false, number: 0, depth: 0, spans } if spans.contains(&MdSpan::Text("甲".into()))));
-        assert!(matches!(&blocks[2], MdBlock::ListItem { ordered: true, number: 1, .. }));
-        assert!(matches!(&blocks[3], MdBlock::ListItem { ordered: true, number: 2, .. }));
+        assert!(
+            matches!(&blocks[0], MdBlock::ListItem { ordered: false, number: 0, depth: 0, spans } if spans.contains(&MdSpan::Text("甲".into())))
+        );
+        assert!(matches!(
+            &blocks[2],
+            MdBlock::ListItem {
+                ordered: true,
+                number: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &blocks[3],
+            MdBlock::ListItem {
+                ordered: true,
+                number: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn quote_rule_link() {
         let blocks = parse_markdown("> 引用内容\n\n---\n\n[链接](https://example.com)");
         assert_eq!(blocks.len(), 3);
-        assert!(matches!(&blocks[0], MdBlock::Quote(sp) if sp.contains(&MdSpan::Text("引用内容".into()))));
+        assert!(
+            matches!(&blocks[0], MdBlock::Quote(sp) if sp.contains(&MdSpan::Text("引用内容".into())))
+        );
         assert!(matches!(blocks[1], MdBlock::Rule));
-        assert!(matches!(&blocks[2], MdBlock::Paragraph(sp) if matches!(sp[0], MdSpan::Link { ref url, .. } if url == "https://example.com")));
+        assert!(
+            matches!(&blocks[2], MdBlock::Paragraph(sp) if matches!(sp[0], MdSpan::Link { ref url, .. } if url == "https://example.com"))
+        );
     }
 }

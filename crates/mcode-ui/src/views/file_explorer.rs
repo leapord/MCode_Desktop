@@ -7,19 +7,29 @@
 //! 新建文件/目录 + 删除二次确认。所有路径经工作区校验，操作后刷新补全 file_tree。
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, Context, InteractiveElement, StatefulInteractiveElement,
-    SharedString,
+    Context, InteractiveElement, SharedString, StatefulInteractiveElement, actions, div,
+    prelude::*, px, rgb,
 };
 use mcode_core::tools::contain_to_workspace;
 use std::path::{Path, PathBuf};
 
 use crate::app::App;
-use crate::msg::trunc;
-use crate::theme::*;
+use crate::app::msg::trunc;
+use crate::views::theme::*;
 
 actions!(
     explorer,
-    [FsCopy, FsCut, FsPaste, FsNewFile, FsNewDir, FsDelete, FsSelUp, FsSelDown, FsToggleDir]
+    [
+        FsCopy,
+        FsCut,
+        FsPaste,
+        FsNewFile,
+        FsNewDir,
+        FsDelete,
+        FsSelUp,
+        FsSelDown,
+        FsToggleDir
+    ]
 );
 
 /// 扩展名 → 图标
@@ -27,7 +37,13 @@ fn file_icon(name: &str, is_dir: bool, open: bool) -> &'static str {
     if is_dir {
         return if open { "📂" } else { "📁" };
     }
-    match name.rsplit('.').next().unwrap_or_default().to_lowercase().as_str() {
+    match name
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
         "rs" => "🦀",
         "md" => "📝",
         "json" => "🔧",
@@ -63,7 +79,9 @@ impl App {
         if depth > 8 || rows.len() >= 2000 {
             return;
         }
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         let mut items: Vec<(String, PathBuf, bool)> = entries
             .flatten()
             .filter(|e| {
@@ -86,7 +104,13 @@ impl App {
         items.sort_by(|a, b| (b.2, &a.0).cmp(&(a.2, &b.0)));
         for (name, path, is_dir) in items {
             let open = is_dir && self.expanded_dirs.contains(&path);
-            rows.push(FsRow { path: path.clone(), name, is_dir, depth, open });
+            rows.push(FsRow {
+                path: path.clone(),
+                name,
+                is_dir,
+                depth,
+                open,
+            });
             if is_dir && open {
                 self.fs_walk(&path, depth + 1, rows);
             }
@@ -99,7 +123,11 @@ impl App {
 
     /// 路径必须在 cwd 内（复用内核 contain_to_workspace 校验）
     fn ws_ok(&self, p: &Path) -> Option<PathBuf> {
-        let rel = p.strip_prefix(&self.cwd).ok()?.to_string_lossy().into_owned();
+        let rel = p
+            .strip_prefix(&self.cwd)
+            .ok()?
+            .to_string_lossy()
+            .into_owned();
         contain_to_workspace(&self.cwd, &rel).ok()
     }
 
@@ -122,7 +150,13 @@ impl App {
                 return candidate;
             }
         }
-        format!("{stem}-{}/copy", std::time::SystemTime::now().elapsed().unwrap_or_default().as_millis())
+        format!(
+            "{stem}-{}/copy",
+            std::time::SystemTime::now()
+                .elapsed()
+                .unwrap_or_default()
+                .as_millis()
+        )
     }
 
     /// 递归复制目录
@@ -144,7 +178,10 @@ impl App {
     fn paste_dir(&self) -> PathBuf {
         match &self.fs_selected {
             Some(p) if p.is_dir() => p.clone(),
-            Some(p) => p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| self.cwd.clone()),
+            Some(p) => p
+                .parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| self.cwd.clone()),
             None => self.cwd.clone(),
         }
     }
@@ -160,7 +197,10 @@ impl App {
             return;
         };
         let dir = self.paste_dir();
-        let name = src_ok.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = src_ok
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let dest = dir.join(Self::dedup_name(&dir, &name));
         let result = if cut {
             std::fs::rename(&src_ok, &dest)
@@ -173,7 +213,10 @@ impl App {
         };
         match result {
             Ok(_) => {
-                self.push_notice(format!("✓ {} → {}", src_ok.display(), dest.display()), false);
+                self.push_notice(
+                    format!("✓ {} → {}", src_ok.display(), dest.display()),
+                    false,
+                );
                 if cut {
                     self.fs_clipboard = None;
                     if self.fs_selected.as_ref() == Some(&src_ok) {
@@ -190,7 +233,14 @@ impl App {
         match &self.fs_selected {
             Some(p) => {
                 self.fs_clipboard = Some((p.clone(), cut));
-                self.push_notice(format!("{} {}（cmd-v 粘贴）", if cut { "✂" } else { "📄" }, p.display()), false);
+                self.push_notice(
+                    format!(
+                        "{} {}（cmd-v 粘贴）",
+                        if cut { "✂" } else { "📄" },
+                        p.display()
+                    ),
+                    false,
+                );
             }
             None => self.push_notice("未选中文件".to_string(), true),
         }
@@ -228,7 +278,13 @@ impl App {
         }
         if self.fs_delete_armed.as_ref() != Some(&p) {
             self.fs_delete_armed = Some(p.clone());
-            self.push_notice(format!("⚠ 将删除 {}（目录将递归删除）——再次点击删除按钮确认", p.display()), true);
+            self.push_notice(
+                format!(
+                    "⚠ 将删除 {}（目录将递归删除）——再次点击删除按钮确认",
+                    p.display()
+                ),
+                true,
+            );
             return;
         }
         let r = if p.is_dir() {
@@ -255,8 +311,12 @@ impl App {
 
     // ---------- 重命名（右键菜单 → 行内弹窗） ----------
 
-    fn rename_input(&mut self, cx: &mut Context<App>, name: &str) -> gpui::Entity<crate::text_input::TextInput> {
-        cx.new(|cx| crate::text_input::TextInput {
+    fn rename_input(
+        &mut self,
+        cx: &mut Context<App>,
+        name: &str,
+    ) -> gpui::Entity<crate::views::text_input::TextInput> {
+        cx.new(|cx| crate::views::text_input::TextInput {
             focus_handle: cx.focus_handle(),
             content: name.to_string().into(),
             placeholder: "新名称".into(),
@@ -275,11 +335,13 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let input = self.rename_input(cx, &name);
-        self.rename_state = Some(crate::context_menu::RenameState { path, input });
+        self.rename_state = Some(crate::views::context_menu::RenameState { path, input });
     }
 
     pub(crate) fn confirm_rename(&mut self, cx: &mut Context<App>) {
-        let Some(st) = self.rename_state.as_ref() else { return };
+        let Some(st) = self.rename_state.as_ref() else {
+            return;
+        };
         let target = st.path.clone();
         let new_name = st.input.read(cx).text().trim().to_string();
         self.rename_state = None;
@@ -340,7 +402,11 @@ impl App {
             .map(|r| r.to_string_lossy().into_owned())
             .unwrap_or_else(|_| path.to_string_lossy().into_owned());
         let cur = self.input.read(cx).text();
-        let sep = if cur.is_empty() || cur.ends_with(' ') { "" } else { " " };
+        let sep = if cur.is_empty() || cur.ends_with(' ') {
+            ""
+        } else {
+            " "
+        };
         let new_text = format!("{cur}{sep}@{rel} ");
         self.input.update(cx, |i, cx| i.set_text(&new_text, cx));
     }
@@ -377,7 +443,11 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
     let selected = app.fs_selected.clone();
     let armed = app.fs_delete_armed.clone();
     let clipboard: Option<SharedString> = app.fs_clipboard.as_ref().map(|(p, cut)| {
-        SharedString::from(format!("{} {}", if *cut { "✂" } else { "📄" }, trunc(&p.to_string_lossy(), 22)))
+        SharedString::from(format!(
+            "{} {}",
+            if *cut { "✂" } else { "📄" },
+            trunc(&p.to_string_lossy(), 22)
+        ))
     });
     let rows = app.fs_rows();
 
@@ -386,30 +456,60 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         div()
             .flex()
             .gap_1()
-            .child(fs_btn("app", "＋", "新建文件", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_new(false);
-                cx.notify();
-            })))
-            .child(fs_btn("dir", "⛁", "新建目录", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_new(true);
-                cx.notify();
-            })))
-            .child(fs_btn("copy", "⧉", "复制（cmd-c）", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_copy_entry(false);
-                cx.notify();
-            })))
-            .child(fs_btn("cut", "✂", "剪切（cmd-x）", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_copy_entry(true);
-                cx.notify();
-            })))
-            .child(fs_btn("paste", "📋", "粘贴（cmd-v）", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_paste();
-                cx.notify();
-            })))
-            .child(fs_btn("del", &armed_label(&armed), "删除（二次确认）", cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.fs_delete();
-                cx.notify();
-            })))
+            .child(fs_btn(
+                "app",
+                "＋",
+                "新建文件",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_new(false);
+                    cx.notify();
+                }),
+            ))
+            .child(fs_btn(
+                "dir",
+                "⛁",
+                "新建目录",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_new(true);
+                    cx.notify();
+                }),
+            ))
+            .child(fs_btn(
+                "copy",
+                "⧉",
+                "复制（cmd-c）",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_copy_entry(false);
+                    cx.notify();
+                }),
+            ))
+            .child(fs_btn(
+                "cut",
+                "✂",
+                "剪切（cmd-x）",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_copy_entry(true);
+                    cx.notify();
+                }),
+            ))
+            .child(fs_btn(
+                "paste",
+                "📋",
+                "粘贴（cmd-v）",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_paste();
+                    cx.notify();
+                }),
+            ))
+            .child(fs_btn(
+                "del",
+                &armed_label(&armed),
+                "删除（二次确认）",
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.fs_delete();
+                    cx.notify();
+                }),
+            ))
     };
 
     // 文件树行
@@ -444,20 +544,33 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                 }
                 cx.notify();
             }))
-            .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
                     // 右键 = 选中 + 弹上下文菜单；坐标/翻折/clamp 统一在 open_context_menu
                     // （event.position 为窗口坐标，菜单挂窗口根层，菜单位置即鼠标位置）
                     this.fs_selected = Some(rc_path.clone());
                     this.fs_delete_armed = None;
-                    this.open_context_menu(rc_path.clone(), ev.position.x.to_f64() as f32, ev.position.y.to_f64() as f32, {
-                        let vp = window.viewport_size();
-                        (vp.width.to_f64() as f32, vp.height.to_f64() as f32)
-                    }, cx);
+                    this.open_context_menu(
+                        rc_path.clone(),
+                        ev.position.x.to_f64() as f32,
+                        ev.position.y.to_f64() as f32,
+                        {
+                            let vp = window.viewport_size();
+                            (vp.width.to_f64() as f32, vp.height.to_f64() as f32)
+                        },
+                        cx,
+                    );
                     this.explorer_focus.focus(window);
                     cx.notify();
-                }))
+                }),
+            )
             .child(div().child(file_icon(&r.name, r.is_dir, r.open)))
-            .child(div().text_color(if sel { TEXT_1 } else { TEXT_2 }).child(r.name.clone()))
+            .child(
+                div()
+                    .text_color(if sel { TEXT_1 } else { TEXT_2 })
+                    .child(r.name.clone()),
+            )
     }));
 
     tree = tree.child(div().flex_1());
@@ -472,17 +585,45 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         .border_color(BORDER)
         .key_context("FileExplorer")
         .track_focus(&app.explorer_focus)
-        .on_action(cx.listener(|this, _: &FsCopy, _, cx| { this.fs_copy_entry(false); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsCut, _, cx| { this.fs_copy_entry(true); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsPaste, _, cx| { this.fs_paste(); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsNewFile, _, cx| { this.fs_new(false); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsNewDir, _, cx| { this.fs_new(true); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsDelete, _, cx| { this.fs_delete(); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsSelUp, _, cx| { this.fs_move_selection(false); cx.notify(); }))
-        .on_action(cx.listener(|this, _: &FsSelDown, _, cx| { this.fs_move_selection(true); cx.notify(); }))
+        .on_action(cx.listener(|this, _: &FsCopy, _, cx| {
+            this.fs_copy_entry(false);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsCut, _, cx| {
+            this.fs_copy_entry(true);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsPaste, _, cx| {
+            this.fs_paste();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsNewFile, _, cx| {
+            this.fs_new(false);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsNewDir, _, cx| {
+            this.fs_new(true);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsDelete, _, cx| {
+            this.fs_delete();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsSelUp, _, cx| {
+            this.fs_move_selection(false);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &FsSelDown, _, cx| {
+            this.fs_move_selection(true);
+            cx.notify();
+        }))
         .on_action(cx.listener(|this, e: &FsToggleDir, _, cx| {
             let _ = e;
-            this.fs_selected.clone().inspect(|p| if p.is_dir() { this.fs_toggle_dir(p); });
+            this.fs_selected.clone().inspect(|p| {
+                if p.is_dir() {
+                    this.fs_toggle_dir(p);
+                }
+            });
             cx.notify();
         }))
         .child(
@@ -494,10 +635,13 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                 .px_2()
                 .border_b_1()
                 .border_color(BORDER)
-                .child(div().text_size(px(11.)).text_color(TEXT_3).child("工作区文件"))
-                .children(clipboard.map(|c| {
-                    div().text_size(px(9.5)).text_color(BLUE).child(c)
-                }))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(TEXT_3)
+                        .child("工作区文件"),
+                )
+                .children(clipboard.map(|c| div().text_size(px(9.5)).text_color(BLUE).child(c)))
                 .child(div().flex_1())
                 .child(
                     div()
@@ -516,7 +660,11 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
                             this.file_tree = scan_file_tree(&this.cwd, this.show_hidden);
                             cx.notify();
                         }))
-                        .child(if app.show_hidden { "● 隐藏" } else { "◌ 隐藏" }),
+                        .child(if app.show_hidden {
+                            "● 隐藏"
+                        } else {
+                            "◌ 隐藏"
+                        }),
                 )
                 .child(toolbar),
         )
@@ -589,7 +737,10 @@ fn armed_label(armed: &Option<PathBuf>) -> String {
 // ---------- 右键菜单 / 重命名弹窗渲染 ----------
 
 /// 重命名弹窗（居中小卡：TextInput 预填 + 确认/取消）
-pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Option<gpui::AnyElement> {
+pub(crate) fn render_rename_modal(
+    app: &mut App,
+    cx: &mut Context<App>,
+) -> Option<gpui::AnyElement> {
     let input = app.rename_state.as_ref()?.input.clone();
     let overlay = div()
         .absolute()
@@ -622,7 +773,10 @@ pub(crate) fn render_rename_modal(app: &mut App, cx: &mut Context<App>) -> Optio
                         .child(input),
                 )
                 .child(
-                    div().flex().justify_end().gap_2()
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
                         .child(
                             div()
                                 .id("btn-rename-cancel")
@@ -682,22 +836,28 @@ fn walk_dir(
     if depth >= 3 || out.len() >= 600 {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         if out.len() >= 600 {
             return;
         }
         let name = e.file_name().to_string_lossy().into_owned();
-        if matches!(name.as_str(), "target" | "node_modules") || (!show_hidden && name.starts_with('.')) {
+        if matches!(name.as_str(), "target" | "node_modules")
+            || (!show_hidden && name.starts_with('.'))
+        {
             continue;
         }
         let p = e.path();
         if p.is_dir() {
-            out.push(format!("{}/", e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()));
+            out.push(format!(
+                "{}/",
+                e.path().strip_prefix(base).unwrap_or(&p).to_string_lossy()
+            ));
             walk_dir(base, &p, depth + 1, show_hidden, out);
         } else if let Ok(rel) = p.strip_prefix(base) {
             out.push(rel.to_string_lossy().into_owned());
         }
     }
 }
-

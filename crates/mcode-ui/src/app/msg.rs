@@ -85,10 +85,7 @@ pub struct PendingPermission {
     pub respond: Option<tokio::sync::oneshot::Sender<Decision>>,
 }
 
-
-
 /// 截断显示文本
 pub(crate) fn trunc(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
-

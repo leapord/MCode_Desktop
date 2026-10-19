@@ -2,7 +2,7 @@
 //! 覆盖"状态机直调绿但真机失败"的事件路由断点（遮罩先吃 down → 菜单卸载 → on_click 落空）。
 
 use crate::app::App;
-use gpui::{point, MouseButton, TestAppContext};
+use gpui::{MouseButton, TestAppContext, point};
 use std::path::PathBuf;
 
 /// 带真窗口的测试环境：tempdir cwd + 预置文件（首帧即渲染行）
@@ -11,7 +11,7 @@ fn windowed_setup(
     files: &[&str],
     dirs: &[&str],
 ) -> (gpui::Entity<App>, PathBuf, gpui::VisualTestContext) {
-    let tmp = crate::interaction_tests::make_temp_dir();
+    let tmp = crate::tests::interaction_tests::make_temp_dir();
     for f in files {
         std::fs::write(tmp.join(f), "data").unwrap();
     }
@@ -20,9 +20,9 @@ fn windowed_setup(
     }
     let window = cx.add_window(|_, cx| {
         let mut a = App::new_for_test(cx);
-        a.cfg = crate::interaction_tests::test_config();
+        a.cfg = crate::tests::interaction_tests::test_config();
         a.cwd = tmp.clone();
-        a.file_tree = crate::file_explorer::scan_file_tree(&a.cwd, a.show_hidden);
+        a.file_tree = crate::views::file_explorer::scan_file_tree(&a.cwd, a.show_hidden);
         a.refresh_sessions();
         a
     });
@@ -37,7 +37,10 @@ fn click(cx: &mut gpui::VisualTestContext, pos: gpui::Point<gpui::Pixels>, butto
 }
 
 fn center(b: gpui::Bounds<gpui::Pixels>) -> gpui::Point<gpui::Pixels> {
-    point(b.origin.x + b.size.width / 2., b.origin.y + b.size.height / 2.)
+    point(
+        b.origin.x + b.size.width / 2.,
+        b.origin.y + b.size.height / 2.,
+    )
 }
 
 fn cleanup(tmp: &PathBuf) {
@@ -60,29 +63,46 @@ async fn case30_real_events_delete_via_context_menu(cx: &mut TestAppContext) {
         let cx_f = click_pos.x.to_f64() as f32;
         let cy_f = click_pos.y.to_f64() as f32;
         if cx_f + 170. <= vp_w - 8. {
-            assert!((m.x - cx_f).abs() <= 2. && (m.y - cy_f).abs() <= 2., "菜单坐标 != 右键点");
+            assert!(
+                (m.x - cx_f).abs() <= 2. && (m.y - cy_f).abs() <= 2.,
+                "菜单坐标 != 右键点"
+            );
         } else {
             // 翻折：菜单完整入窗
-            assert!(m.x + 170. <= vp_w - 8. + 2. && m.x <= cx_f + 2., "翻折后仍出窗或右移: x={}", m.x);
+            assert!(
+                m.x + 170. <= vp_w - 8. + 2. && m.x <= cx_f + 2.,
+                "翻折后仍出窗或右移: x={}",
+                m.x
+            );
         }
     });
     // ② 左键点"删除"菜单项
-    let del = cx.debug_bounds("menuitem-🗑 删除").expect("删除菜单项未渲染");
+    let del = cx
+        .debug_bounds("menuitem-🗑 删除")
+        .expect("删除菜单项未渲染");
     click(&mut cx, center(del), MouseButton::Left);
     cx.run_until_parked();
     // ③ 菜单仍打开 + 武装（真实路由下两段式的第一段）
     view.update(&mut cx, |a, _| {
-        let m = a.context_menu.as_ref().expect("第一次点击后菜单被关闭（真实路由断点）");
+        let m = a
+            .context_menu
+            .as_ref()
+            .expect("第一次点击后菜单被关闭（真实路由断点）");
         assert!(m.delete_armed, "武装未置位");
     });
-    let confirm = cx.debug_bounds("menuitem-🗑 确认删除？").expect("确认删除项未渲染");
+    let confirm = cx
+        .debug_bounds("menuitem-🗑 确认删除？")
+        .expect("确认删除项未渲染");
     click(&mut cx, center(confirm), MouseButton::Left);
     cx.run_until_parked();
     // ④ 文件已删除 + 菜单关闭
     view.update(&mut cx, |a, _| {
         assert!(a.context_menu.is_none(), "删除完成后菜单未关闭");
     });
-    assert!(!tmp.join("victim.txt").exists(), "文件未删除（真实事件下删除无效）");
+    assert!(
+        !tmp.join("victim.txt").exists(),
+        "文件未删除（真实事件下删除无效）"
+    );
     cleanup(&tmp);
 }
 
@@ -93,7 +113,9 @@ async fn case31_real_events_rename_via_menu(cx: &mut TestAppContext) {
     let row = cx.debug_bounds("fsrow-before.txt").expect("行元素未渲染");
     click(&mut cx, center(row), MouseButton::Right);
     cx.run_until_parked();
-    let item = cx.debug_bounds("menuitem-✏️ 重命名").expect("重命名菜单项未渲染");
+    let item = cx
+        .debug_bounds("menuitem-✏️ 重命名")
+        .expect("重命名菜单项未渲染");
     click(&mut cx, center(item), MouseButton::Left);
     cx.run_until_parked();
     // 弹窗打开，输入框预填
@@ -108,7 +130,10 @@ async fn case31_real_events_rename_via_menu(cx: &mut TestAppContext) {
     view.update(&mut cx, |a, _| {
         assert!(a.rename_state.is_none(), "确认后弹窗未关闭");
     });
-    assert!(!tmp.join("before.txt").exists() && tmp.join("after.txt").exists(), "重命名未生效");
+    assert!(
+        !tmp.join("before.txt").exists() && tmp.join("after.txt").exists(),
+        "重命名未生效"
+    );
     cleanup(&tmp);
 }
 
@@ -130,11 +155,16 @@ async fn case32_real_events_copy_toolbar_paste_menu(cx: &mut TestAppContext) {
     let drow = cx.debug_bounds("fsrow-dst_dir").expect("目录行未渲染");
     click(&mut cx, center(drow), MouseButton::Right);
     cx.run_until_parked();
-    let paste = cx.debug_bounds("menuitem-📋 粘贴到此处").expect("粘贴菜单项未渲染");
+    let paste = cx
+        .debug_bounds("menuitem-📋 粘贴到此处")
+        .expect("粘贴菜单项未渲染");
     click(&mut cx, center(paste), MouseButton::Left);
     cx.run_until_parked();
     // ③ 目标副本存在（首贴无后缀）
-    assert!(tmp.join("dst_dir").join("src.txt").exists(), "粘贴副本未出现");
+    assert!(
+        tmp.join("dst_dir").join("src.txt").exists(),
+        "粘贴副本未出现"
+    );
     assert_eq!(
         std::fs::read(tmp.join("dst_dir").join("src.txt")).unwrap(),
         b"data"
@@ -177,7 +207,9 @@ async fn case33_real_events_delete_directory(cx: &mut TestAppContext) {
         let m = a.context_menu.as_ref().expect("第一次点击后菜单被关闭");
         assert!(m.delete_armed, "目录删除未武装");
     });
-    let confirm = cx.debug_bounds("menuitem-🗑 确认删除？").expect("确认删除项未渲染");
+    let confirm = cx
+        .debug_bounds("menuitem-🗑 确认删除？")
+        .expect("确认删除项未渲染");
     click(&mut cx, center(confirm), MouseButton::Left);
     cx.run_until_parked();
     // ③ 目录从文件系统消失（含嵌套内容）
@@ -192,7 +224,10 @@ async fn case33_real_events_delete_directory(cx: &mut TestAppContext) {
             "expanded_dirs 残留已删目录"
         );
         let rows = a.fs_rows();
-        assert!(!rows.iter().any(|r| r.path.ends_with("victim_dir")), "树未刷新，目录仍在行集");
+        assert!(
+            !rows.iter().any(|r| r.path.ends_with("victim_dir")),
+            "树未刷新，目录仍在行集"
+        );
     });
     cleanup(&tmp);
 }
@@ -208,12 +243,17 @@ async fn case34_real_events_rename_directory(cx: &mut TestAppContext) {
     click(&mut cx, center(row), MouseButton::Left);
     cx.run_until_parked();
     view.update(&mut cx, |a, _| {
-        assert!(a.expanded_dirs.iter().any(|d| d.ends_with("old_dir")), "目录未展开");
+        assert!(
+            a.expanded_dirs.iter().any(|d| d.ends_with("old_dir")),
+            "目录未展开"
+        );
     });
     // 右键 → 重命名 → 弹窗 → 确认
     click(&mut cx, center(row), MouseButton::Right);
     cx.run_until_parked();
-    let item = cx.debug_bounds("menuitem-✏️ 重命名").expect("重命名项未渲染");
+    let item = cx
+        .debug_bounds("menuitem-✏️ 重命名")
+        .expect("重命名项未渲染");
     click(&mut cx, center(item), MouseButton::Left);
     cx.run_until_parked();
     view.update(&mut cx, |a, cx| {

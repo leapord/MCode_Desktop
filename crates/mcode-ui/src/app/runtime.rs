@@ -6,10 +6,10 @@
 //! UI 事件流统一为 UiEvent（Agent 事件 + 权限确认请求），单泵转发进 GPUI 实体。
 
 use anyhow::Result;
+use mcode_core::agent::ModelBackend;
 use mcode_core::agent::context::load_project_doc;
 use mcode_core::agent::runner::{AgentDeps, ConfirmRequest, ConfirmSender};
-use mcode_core::agent::subagent::{all_agents, TaskTool};
-use mcode_core::agent::ModelBackend;
+use mcode_core::agent::subagent::{TaskTool, all_agents};
 use mcode_core::api::ResponsesBackend;
 use mcode_core::hooks::HookEngine;
 use mcode_core::permission::PermissionManager;
@@ -141,7 +141,10 @@ async fn build_harness_async(
 
     // task 工具（需要 deps 自引用，deps 构建后注册）
     let agents = deps.agents.clone();
-    deps.registry.register(Arc::new(TaskTool { deps: deps.clone(), agents }));
+    deps.registry.register(Arc::new(TaskTool {
+        deps: deps.clone(),
+        agents,
+    }));
 
     // MCP：真实连接 + 工具注册（失败的 server 记入报告，不阻断）
     let mcp_report = mcode_core::mcp::attach_all(&desktop.mcp_servers, &deps.registry).await;

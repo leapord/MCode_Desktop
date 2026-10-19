@@ -6,16 +6,26 @@
 //! （chat 布局在 chat_view.rs；文件超 800 行时按规格拆分）。
 //! 布局规范 = docs/prototype/screens/{settings,extensions,sessions,onboarding}.html。
 
+pub mod chat_view;
+pub mod context_menu;
+pub mod file_explorer;
+pub mod markdown_view;
+pub mod sidebar_view;
+pub mod text_input;
+pub mod theme;
+pub mod workspace_picker;
+
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, InteractiveElement, SharedString, StatefulInteractiveElement,
+    AnyElement, InteractiveElement, SharedString, StatefulInteractiveElement, div, prelude::*, px,
+    rgb,
 };
 use mcode_core::permission::Mode;
 
+use crate::app::msg::trunc;
+use crate::app::session_ops::{lang_label, lang_next};
 use crate::app::{App, View};
-use crate::msg::trunc;
-use crate::chat_view::badge;
-use crate::session_ops::{lang_label, lang_next};
-use crate::theme::*;
+use crate::views::chat_view::badge;
+use crate::views::theme::*;
 
 const MODES: [Mode; 4] = [Mode::Passon, Mode::Manual, Mode::Auto, Mode::Plan];
 
@@ -88,12 +98,17 @@ pub fn render_onboarding(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
         .into_any_element()
 }
 
-fn field(label: &str, input: gpui::Entity<crate::text_input::TextInput>) -> gpui::Div {
+fn field(label: &str, input: gpui::Entity<crate::views::text_input::TextInput>) -> gpui::Div {
     div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(div().text_size(px(12.)).text_color(TEXT_2).child(label.to_string()))
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(TEXT_2)
+                .child(label.to_string()),
+        )
         .child(
             div()
                 .rounded_md()
@@ -125,7 +140,11 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
 
     // 供应商卡片 + 模型列表（点击切换 → save + rebuild harness）
     root = root.child(
-        div().flex().flex_col().gap_2().child(div().text_size(px(15.)).child("🔌 模型供应商"))
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_size(px(15.)).child("🔌 模型供应商"))
             .children(provider.map(|p| {
                 div()
                     .rounded_lg()
@@ -137,48 +156,69 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                     .flex_col()
                     .gap_2()
                     .child(
-                        div().flex().items_center().gap_2()
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .child(div().text_size(px(13.5)).child(p.name.clone()))
                             .child(badge("当前激活", ACCENT)),
                     )
                     .child(
-                        div().font_family("Menlo").text_size(px(11.5)).text_color(TEXT_3)
-                            .child(SharedString::from(format!("{} · key: ${}", p.base_url, p.api_key_env))),
+                        div()
+                            .font_family("Menlo")
+                            .text_size(px(11.5))
+                            .text_color(TEXT_3)
+                            .child(SharedString::from(format!(
+                                "{} · key: ${}",
+                                p.base_url, p.api_key_env
+                            ))),
                     )
             }))
             .children(app.cfg.active_provider().map(|p| {
-                div().flex().flex_col().gap_1().children(p.models.iter().enumerate().map(|(i, m)| {
-                    let active = app.cfg.active_model().as_deref() == Some(m.as_str());
-                    let model = m.clone();
-                    div()
-                        .id(SharedString::from(format!("model-{i}")))
-                        .px_3()
-                        .py_1p5()
-                        .rounded_sm()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(12.))
-                        .font_family("Menlo")
-                        .text_color(if active { ACCENT } else { TEXT_1 })
-                        .cursor_pointer()
-                        .hover(|s| s.bg(BG_HOVER))
-                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                            if this.set_model(&model) {
-                                this.save_cfg_and_rebuild(cx);
-                                this.push_notice(format!("✓ 模型 → {model}"), false);
-                            }
-                            cx.notify();
-                        }))
-                        .child(if active { format!("▸ {m} · 使用中") } else { m.clone() })
-                }))
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(p.models.iter().enumerate().map(|(i, m)| {
+                        let active = app.cfg.active_model().as_deref() == Some(m.as_str());
+                        let model = m.clone();
+                        div()
+                            .id(SharedString::from(format!("model-{i}")))
+                            .px_3()
+                            .py_1p5()
+                            .rounded_sm()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(px(12.))
+                            .font_family("Menlo")
+                            .text_color(if active { ACCENT } else { TEXT_1 })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(BG_HOVER))
+                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                if this.set_model(&model) {
+                                    this.save_cfg_and_rebuild(cx);
+                                    this.push_notice(format!("✓ 模型 → {model}"), false);
+                                }
+                                cx.notify();
+                            }))
+                            .child(if active {
+                                format!("▸ {m} · 使用中")
+                            } else {
+                                m.clone()
+                            })
+                    }))
             })),
     );
 
     // 语言 / 默认模式 / PUA
     root = root
         .child(
-            div().flex().flex_col().gap_2().child(div().text_size(px(15.)).child("🌐 语言环境（/language）"))
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_size(px(15.)).child("🌐 语言环境（/language）"))
                 .child(
                     div()
                         .id("lang-cycle")
@@ -201,36 +241,50 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                 ),
         )
         .child(
-            div().flex().flex_col().gap_2().child(div().text_size(px(15.)).child("🛡 默认权限模式（会话内 shift+tab 临时切换）"))
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
                 .child(
-                    div().flex().gap_2().children(MODES.map(|m| {
-                        let sel = app.cfg.default_mode == m;
-                        div()
-                            .id(SharedString::from(format!("mode-{}", m.label())))
-                            .flex_1()
-                            .p_3()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(if sel { mode_color(m) } else { BORDER_STRONG })
-                            .bg(BG_PANEL)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(BG_HOVER))
-                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                                this.set_default_mode(m, cx);
-                                cx.notify();
-                            }))
-                            .child(
-                                div().text_size(px(13.)).child(SharedString::from(format!(
-                                    "● {}",
-                                    m.label()
-                                ))),
-                            )
-                            .child(div().text_size(px(11.)).text_color(TEXT_3).child(mode_hint(m)))
-                    })),
-                ),
+                    div()
+                        .text_size(px(15.))
+                        .child("🛡 默认权限模式（会话内 shift+tab 临时切换）"),
+                )
+                .child(div().flex().gap_2().children(MODES.map(|m| {
+                    let sel = app.cfg.default_mode == m;
+                    div()
+                        .id(SharedString::from(format!("mode-{}", m.label())))
+                        .flex_1()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if sel { mode_color(m) } else { BORDER_STRONG })
+                        .bg(BG_PANEL)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(BG_HOVER))
+                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.set_default_mode(m, cx);
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .child(SharedString::from(format!("● {}", m.label()))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(TEXT_3)
+                                .child(mode_hint(m)),
+                        )
+                }))),
         )
         .child(
-            div().flex().items_center().gap_2().child(div().text_size(px(15.)).child("🧘 PUA 收敛纪律"))
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().text_size(px(15.)).child("🧘 PUA 收敛纪律"))
                 .child(
                     div()
                         .id("pua-toggle")
@@ -238,7 +292,11 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                         .py_1p5()
                         .rounded_md()
                         .border_1()
-                        .border_color(if app.cfg.pua_always_on { GREEN } else { BORDER_STRONG })
+                        .border_color(if app.cfg.pua_always_on {
+                            GREEN
+                        } else {
+                            BORDER_STRONG
+                        })
                         .bg(BG_PANEL)
                         .cursor_pointer()
                         .text_size(px(12.))
@@ -248,18 +306,36 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                             this.set_pua(!on, cx);
                             cx.notify();
                         }))
-                        .child(if app.cfg.pua_always_on { "已开启（/pua:off 关闭）" } else { "已关闭（/pua:on 开启）" }),
+                        .child(if app.cfg.pua_always_on {
+                            "已开启（/pua:off 关闭）"
+                        } else {
+                            "已关闭（/pua:on 开启）"
+                        }),
                 ),
         );
 
     // 权限规则（desktop.json 来源）
     root = root.child(
-        div().flex().flex_col().gap_2().child(div().text_size(px(15.)).child("🔓 权限规则（~/.mcode/desktop.json）"))
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(
-                if desktop.permission_rules.is_empty() {
-                    div().text_size(px(12.)).text_color(TEXT_3).child("暂无规则（allow/deny 子串匹配，编辑 desktop.json 后重启生效）")
-                } else {
-                    div().flex().flex_col().gap_1().children(desktop.permission_rules.iter().map(|r| {
+                div()
+                    .text_size(px(15.))
+                    .child("🔓 权限规则（~/.mcode/desktop.json）"),
+            )
+            .child(if desktop.permission_rules.is_empty() {
+                div()
+                    .text_size(px(12.))
+                    .text_color(TEXT_3)
+                    .child("暂无规则（allow/deny 子串匹配，编辑 desktop.json 后重启生效）")
+            } else {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(desktop.permission_rules.iter().map(|r| {
                         div()
                             .flex()
                             .items_center()
@@ -272,11 +348,14 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                             .font_family("Menlo")
                             .child(div().text_color(TEXT_1).child(r.tool.clone()))
                             .child(div().text_color(TEXT_3).child(r.pattern.clone()))
-                            .child(div().ml_auto().text_color(if r.allow { GREEN } else { RED })
-                                .child(if r.allow { "ALLOW" } else { "DENY" }))
+                            .child(
+                                div()
+                                    .ml_auto()
+                                    .text_color(if r.allow { GREEN } else { RED })
+                                    .child(if r.allow { "ALLOW" } else { "DENY" }),
+                            )
                     }))
-                },
-            ),
+            }),
     );
 
     // 重新运行引导
@@ -329,7 +408,10 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
             .and_then(|h| h.mcp_report.iter().find(|(n, _)| n == &cfg.name));
         let (dot, state): (&'static str, SharedString) = match report {
             Some((_, Ok(n))) => ("🟢", format!("connected · 已注入 {n} 个工具").into()),
-            Some((_, Err(e))) => ("🔴", format!("连接失败：{}", trunc(&format!("{e:#}"), 60)).into()),
+            Some((_, Err(e))) => (
+                "🔴",
+                format!("连接失败：{}", trunc(&format!("{e:#}"), 60)).into(),
+            ),
             None => ("⚪", "已停用".into()),
         };
         let name: SharedString = cfg.name.clone().into();
@@ -346,53 +428,87 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                 .bg(BG_PANEL)
                 .child(div().text_size(px(14.)).child(dot))
                 .child(
-                    div().flex().flex_col()
+                    div()
+                        .flex()
+                        .flex_col()
                         .child(div().text_size(px(12.5)).text_color(TEXT_1).child(name))
-                        .child(div().font_family("Menlo").text_size(px(10.5)).text_color(TEXT_3).child(meta)),
+                        .child(
+                            div()
+                                .font_family("Menlo")
+                                .text_size(px(10.5))
+                                .text_color(TEXT_3)
+                                .child(meta),
+                        ),
                 )
-                .child(div().ml_auto().text_size(px(11.)).text_color(if matches!(report, Some((_, Ok(_)))) { GREEN } else { TEXT_3 })
-                    .child(state)),
+                .child(
+                    div()
+                        .ml_auto()
+                        .text_size(px(11.))
+                        .text_color(if matches!(report, Some((_, Ok(_)))) {
+                            GREEN
+                        } else {
+                            TEXT_3
+                        })
+                        .child(state),
+                ),
         );
     }
     root = root.child(
-        div().flex().flex_col().gap_2()
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(div().text_size(px(15.)).child("🔗 MCP Servers（/mcp）"))
             .children(mcp_rows)
             .when(desktop.mcp_servers.is_empty(), |d| {
-                d.child(div().text_size(px(12.)).text_color(TEXT_3).child("未配置 MCP server"))
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(TEXT_3)
+                        .child("未配置 MCP server"),
+                )
             }),
     );
 
     // hooks：event / matcher / command
     root = root.child(
-        div().flex().flex_col().gap_2()
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(div().text_size(px(15.)).child("🪝 Hooks（/hooks）"))
             .child(if desktop.hooks.is_empty() {
-                div().text_size(px(12.)).text_color(TEXT_3).child("未配置 hooks")
+                div()
+                    .text_size(px(12.))
+                    .text_color(TEXT_3)
+                    .child("未配置 hooks")
             } else {
-                div().flex().flex_col().gap_1().children(desktop.hooks.iter().map(|h| {
-                    let event: SharedString = format!("{:?}", h.event).into();
-                    let matcher: SharedString = h.matcher.clone().into();
-                    let command: SharedString = trunc(&h.command, 60).into();
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .px_3()
-                        .py_1p5()
-                        .rounded_sm()
-                        .bg(BG_PANEL)
-                        .text_size(px(11.5))
-                        .font_family("Menlo")
-                        .child(div().text_color(PURPLE).child(event))
-                        .child(div().text_color(TEXT_3).child(matcher))
-                        .child(div().text_color(TEXT_2).child(command))
-                }))
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(desktop.hooks.iter().map(|h| {
+                        let event: SharedString = format!("{:?}", h.event).into();
+                        let matcher: SharedString = h.matcher.clone().into();
+                        let command: SharedString = trunc(&h.command, 60).into();
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .px_3()
+                            .py_1p5()
+                            .rounded_sm()
+                            .bg(BG_PANEL)
+                            .text_size(px(11.5))
+                            .font_family("Menlo")
+                            .child(div().text_color(PURPLE).child(event))
+                            .child(div().text_color(TEXT_3).child(matcher))
+                            .child(div().text_color(TEXT_2).child(command))
+                    }))
             })
-            .child(
-                div().text_size(px(11.5)).text_color(TEXT_3)
-                    .child("提示：编辑 ~/.mcode/desktop.json 后重启生效。MCP 工具与内置工具同一权限门控。"),
-            ),
+            .child(div().text_size(px(11.5)).text_color(TEXT_3).child(
+                "提示：编辑 ~/.mcode/desktop.json 后重启生效。MCP 工具与内置工具同一权限门控。",
+            )),
     );
 
     root.into_any_element()
@@ -416,12 +532,21 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
 
     if app.sessions.is_empty() {
         root = root.child(
-            div().text_size(px(12.)).text_color(TEXT_3).child("暂无会话记录（发送第一条消息后自动创建）"),
+            div()
+                .text_size(px(12.))
+                .text_color(TEXT_3)
+                .child("暂无会话记录（发送第一条消息后自动创建）"),
         );
     }
     root = root.children(app.sessions.iter().map(|m| {
         let title: SharedString = trunc(&m.title, 40).into();
-        let meta: SharedString = format!("{}轮 · {} tokens · {}", m.turns, m.tokens_total, trunc(&m.updated, 10)).into();
+        let meta: SharedString = format!(
+            "{}轮 · {} tokens · {}",
+            m.turns,
+            m.tokens_total,
+            trunc(&m.updated, 10)
+        )
+        .into();
         let id = m.id.clone();
         div()
             .id(SharedString::from(format!("page-sess-{}", m.id)))
@@ -440,7 +565,13 @@ pub fn render_sessions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                 this.resume_session(&id, cx);
             }))
             .child(div().text_size(px(13.)).text_color(TEXT_1).child(title))
-            .child(div().ml_auto().text_size(px(11.)).text_color(TEXT_3).child(meta))
+            .child(
+                div()
+                    .ml_auto()
+                    .text_size(px(11.))
+                    .text_color(TEXT_3)
+                    .child(meta),
+            )
     }));
 
     root.into_any_element()
@@ -469,7 +600,12 @@ fn page_scaffold(
                 .border_b_1()
                 .border_color(BORDER)
                 .child(div().text_size(px(12.5)).child(title.to_string()))
-                .child(div().text_size(px(11.)).text_color(TEXT_3).child(sub.to_string()))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(TEXT_3)
+                        .child(sub.to_string()),
+                )
                 .child(div().flex_1())
                 .child(
                     div()

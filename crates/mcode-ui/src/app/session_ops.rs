@@ -7,10 +7,10 @@
 
 use mcode_core::config::Language;
 use mcode_core::util::mcode_dir;
-use mcode_core::{agent::history::HistoryStore, agent::Role, sessions::SessionStore};
+use mcode_core::{agent::Role, agent::history::HistoryStore, sessions::SessionStore};
 
 use crate::app::View;
-use crate::msg::{default_fold_for, trunc, ChatMsg};
+use crate::app::msg::{ChatMsg, default_fold_for, trunc};
 
 /// 语言循环顺序（设置视图 / /language 用）
 pub const LANGS: [Language; 5] = [
@@ -41,7 +41,10 @@ impl App {
 
     /// 推一条 Notice 消息
     pub fn push_notice(&mut self, text: String, error: bool) {
-        self.messages.push(ChatMsg::Notice { text: text.into(), error });
+        self.messages.push(ChatMsg::Notice {
+            text: text.into(),
+            error,
+        });
     }
 
     /// 刷新会话列表（当前 cwd）
@@ -60,7 +63,9 @@ impl App {
     pub fn new_chat(&mut self) {
         self.messages.clear();
         self.queue.clear();
-        if let Ok(mut h) = self.hist.try_lock() { h.clear(); }
+        if let Ok(mut h) = self.hist.try_lock() {
+            h.clear();
+        }
         self.session = None;
         self.running = false;
         // 可见反馈：空会话下点击「新建会话」也有变化（用户实测反馈）
@@ -87,7 +92,10 @@ impl App {
                     .iter()
                     .map(|c| c.name.to_string())
                     .collect();
-                self.push_notice(format!("可用指令（{}）：\n{}", names.len(), names.join("  ")), false);
+                self.push_notice(
+                    format!("可用指令（{}）：\n{}", names.len(), names.join("  ")),
+                    false,
+                );
             }
             "/status" => {
                 self.push_notice(
@@ -109,10 +117,19 @@ impl App {
                     .and_then(|p| p.resolve_api_key())
                     .map(|_| "OK")
                     .unwrap_or("缺失");
-                self.push_notice(format!("诊断：provider={ready} · api_key={key} · cwd={}", self.cwd.display()), false);
+                self.push_notice(
+                    format!(
+                        "诊断：provider={ready} · api_key={key} · cwd={}",
+                        self.cwd.display()
+                    ),
+                    false,
+                );
             }
             "/token" => {
-                self.push_notice(format!("累计 token：{}（input+output）", self.tokens_total), false);
+                self.push_notice(
+                    format!("累计 token：{}（input+output）", self.tokens_total),
+                    false,
+                );
             }
             "/model" => {
                 if arg.is_empty() {
@@ -131,7 +148,10 @@ impl App {
             "/language" => {
                 if arg.is_empty() {
                     self.push_notice(
-                        format!("当前语言：{}（/language <zh_CN|zh_TW|en_US|ja_JP|ko_KR>）", lang_label(self.cfg.language)),
+                        format!(
+                            "当前语言：{}（/language <zh_CN|zh_TW|en_US|ja_JP|ko_KR>）",
+                            lang_label(self.cfg.language)
+                        ),
                         false,
                     );
                 } else if let Some(l) = parse_language(arg) {
@@ -156,7 +176,10 @@ impl App {
                     let mut desktop = mcode_core::config::DesktopConfig::load();
                     desktop.thinking_effort = level.as_str().to_string();
                     desktop.save().ok();
-                    self.push_notice(format!("🧠 思考深度 → {}（下一回合生效）", level.as_str()), false);
+                    self.push_notice(
+                        format!("🧠 思考深度 → {}（下一回合生效）", level.as_str()),
+                        false,
+                    );
                 } else {
                     self.push_notice(
                         format!("✗ 无法识别思考深度 {arg}（可选 default/low/medium/high）"),
@@ -166,7 +189,9 @@ impl App {
             }
             "/clear" => {
                 self.messages.clear();
-                if let Ok(mut h) = self.hist.try_lock() { h.clear(); }
+                if let Ok(mut h) = self.hist.try_lock() {
+                    h.clear();
+                }
                 self.session = None;
             }
             "/compact" => {
@@ -174,7 +199,9 @@ impl App {
                     self.push_notice("回合运行中，稍后再压缩".to_string(), true);
                     return true;
                 }
-                let Ok(mut h) = self.hist.try_lock() else { return true; };
+                let Ok(mut h) = self.hist.try_lock() else {
+                    return true;
+                };
                 let msgs = h.message_count();
                 let keep = (msgs / 4).max(2);
                 let first = h
@@ -195,7 +222,13 @@ impl App {
                 } else {
                     self.goal = Some(arg.to_string());
                     self.goal_rounds = 0;
-                    self.push_notice(format!("🎯 goal 已设置：{arg}（回合完成后自动推进，上限 {} 轮）", mcode_core::agent::context::MAX_GOAL_ROUNDS), false);
+                    self.push_notice(
+                        format!(
+                            "🎯 goal 已设置：{arg}（回合完成后自动推进，上限 {} 轮）",
+                            mcode_core::agent::context::MAX_GOAL_ROUNDS
+                        ),
+                        false,
+                    );
                 }
             }
             "/agents" | "/skills" | "/mcp" | "/hooks" => {
@@ -203,7 +236,11 @@ impl App {
             }
             "/memory" => {
                 let paths = mcode_core::util::mcode_md_paths(&self.cwd);
-                let list = paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n");
+                let list = paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 self.push_notice(format!("记忆文件（nearest-first）：\n{list}"), false);
             }
             "/init" => {
@@ -241,12 +278,22 @@ impl App {
             "/permissions" => {
                 let desktop = mcode_core::config::DesktopConfig::load();
                 if desktop.permission_rules.is_empty() {
-                    self.push_notice("权限规则为空（~/.mcode/desktop.json permissionRules）".to_string(), false);
+                    self.push_notice(
+                        "权限规则为空（~/.mcode/desktop.json permissionRules）".to_string(),
+                        false,
+                    );
                 } else {
                     let list = desktop
                         .permission_rules
                         .iter()
-                        .map(|r| format!("{}({}) → {}", r.tool, r.pattern, if r.allow { "ALLOW" } else { "DENY" }))
+                        .map(|r| {
+                            format!(
+                                "{}({}) → {}",
+                                r.tool,
+                                r.pattern,
+                                if r.allow { "ALLOW" } else { "DENY" }
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join("\n");
                     self.push_notice(format!("权限规则（desktop.json）：\n{list}"), false);
@@ -292,7 +339,11 @@ impl App {
     }
 
     /// 默认权限模式（设置视图：写配置，重建 harness 生效）
-    pub fn set_default_mode(&mut self, mode: mcode_core::permission::Mode, cx: &mut gpui::Context<Self>) {
+    pub fn set_default_mode(
+        &mut self,
+        mode: mcode_core::permission::Mode,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.cfg.default_mode = mode;
         self.save_cfg_and_rebuild(cx);
     }
@@ -321,20 +372,26 @@ impl App {
                     mcode_core::agent::ContentBlock::ToolUse { name, input, .. } => {
                         tool_uses.push((name.clone(), input.to_string()))
                     }
-                    mcode_core::agent::ContentBlock::ToolResult { output, success, .. } => {
-                        tool_results.push((output.clone(), *success))
-                    }
+                    mcode_core::agent::ContentBlock::ToolResult {
+                        output, success, ..
+                    } => tool_results.push((output.clone(), *success)),
                     _ => {}
                 }
             }
             for text in texts {
                 match m.role {
                     Role::User => {
-                        chat.push(ChatMsg::User { text: text.clone().into(), refs: vec![] });
+                        chat.push(ChatMsg::User {
+                            text: text.clone().into(),
+                            refs: vec![],
+                        });
                         pending_user = Some(text);
                     }
                     Role::Assistant => {
-                        chat.push(ChatMsg::Assistant { text: text.clone().into(), fold: default_fold_for(&text) });
+                        chat.push(ChatMsg::Assistant {
+                            text: text.clone().into(),
+                            fold: default_fold_for(&text),
+                        });
                         if let Some(u) = pending_user.take() {
                             hist.push_turn(u, text);
                         }
@@ -359,7 +416,9 @@ impl App {
             }
         }
         self.messages = chat;
-        if let Ok(mut h) = self.hist.try_lock() { *h = hist; }
+        if let Ok(mut h) = self.hist.try_lock() {
+            *h = hist;
+        }
         self.tokens_total = store.meta.tokens_total;
         self.session = Some(store);
         self.refresh_ctx();
@@ -368,7 +427,6 @@ impl App {
     }
 
     // ---------- /save 快照 ----------
-
 
     // ---------- 补全/上下文/输入历史（字段私有，供渲染层访问） ----------
 
@@ -416,7 +474,14 @@ impl App {
         if self.harness.is_some() {
             // 引导完成后进工作区选择器（IDEA 式首屏链路）
             self.view = View::WorkspacePicker;
-            self.push_notice(format!("✓ 供应商已配置：{}（模型 {}）", self.cfg.active_provider.clone().unwrap_or_default(), models[0]), false);
+            self.push_notice(
+                format!(
+                    "✓ 供应商已配置：{}（模型 {}）",
+                    self.cfg.active_provider.clone().unwrap_or_default(),
+                    models[0]
+                ),
+                false,
+            );
         }
         cx.notify();
     }
@@ -440,10 +505,15 @@ impl App {
             match m {
                 ChatMsg::User { text, .. } => md.push_str(&format!("## 用户\n\n{text}\n\n")),
                 ChatMsg::Assistant { text, .. } => md.push_str(&format!("## MCode\n\n{text}\n\n")),
-                ChatMsg::Thinking { text, .. } => md.push_str(&format!("> 💭 {}\n\n", trunc(text, 200))),
-                ChatMsg::ToolCard { name, args, summary, .. } => {
-                    md.push_str(&format!("- 🔧 {name} `{args}` {summary}\n"))
+                ChatMsg::Thinking { text, .. } => {
+                    md.push_str(&format!("> 💭 {}\n\n", trunc(text, 200)))
                 }
+                ChatMsg::ToolCard {
+                    name,
+                    args,
+                    summary,
+                    ..
+                } => md.push_str(&format!("- 🔧 {name} `{args}` {summary}\n")),
                 ChatMsg::Diff { path, .. } => md.push_str(&format!("- ✏️ diff {path}\n")),
                 ChatMsg::Notice { text, error } => {
                     md.push_str(&format!("- {} {}\n", if *error { "⚠" } else { "ℹ" }, text))

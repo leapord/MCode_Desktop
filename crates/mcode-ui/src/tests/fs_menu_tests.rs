@@ -3,7 +3,7 @@
 //! 右键捕获 listener 为薄封装（open_context_menu），真实鼠标事件路径由 simulate 验证受限，
 //! 以状态级等价覆盖（gpui TestContext 无头环境无法命中真实行元素几何）。
 
-use crate::interaction_tests::setup;
+use crate::tests::interaction_tests::setup;
 use gpui::TestAppContext;
 
 // ---------- 用例 21：右键菜单出现 + 坐标 = 右键点（clamp 后） ----------
@@ -20,7 +20,12 @@ async fn case21_context_menu_opens_at_click_position(cx: &mut TestAppContext) {
     });
     c.app.read_with(cx, |a, _| {
         let m = a.context_menu.as_ref().expect("菜单未出现");
-        assert!((m.x - 800.).abs() <= 2. && (m.y - 300.).abs() <= 2., "坐标偏移: {},{}", m.x, m.y);
+        assert!(
+            (m.x - 800.).abs() <= 2. && (m.y - 300.).abs() <= 2.,
+            "坐标偏移: {},{}",
+            m.x,
+            m.y
+        );
         assert!(!m.is_dir && !m.delete_armed);
     });
     // 目录：同样成立（dir 菜单项更多）
@@ -45,7 +50,10 @@ async fn case22_rename_paths(cx: &mut TestAppContext) {
     c.app.update(cx, |a, _cx| {
         a.fs_rename(&f, "new.txt");
     });
-    assert!(!f.exists() && c.tmp.join("new.txt").exists(), "合法重命名未生效");
+    assert!(
+        !f.exists() && c.tmp.join("new.txt").exists(),
+        "合法重命名未生效"
+    );
 
     // 重名拒绝：新建占用名，重命名回旧名应失败且原文件保留
     std::fs::write(c.tmp.join("occupied.txt"), "z").unwrap();
@@ -80,14 +88,14 @@ async fn case23_delete_two_phase_file_and_dir(cx: &mut TestAppContext) {
     std::fs::write(&f, "x").unwrap();
     // 第一次：仅武装（返回 false = 菜单保持打开），文件仍在
     c.app.update(cx, |a, cx| {
-        let close = a.run_context_action(crate::context_menu::CtxAction::Delete, &f, cx);
+        let close = a.run_context_action(crate::views::context_menu::CtxAction::Delete, &f, cx);
         assert!(!close, "第一次删除不应关闭菜单");
         assert!(a.fs_delete_armed.is_some(), "未武装");
     });
     assert!(f.exists(), "武装阶段文件被误删");
     // 第二次：执行删除
     c.app.update(cx, |a, cx| {
-        let close = a.run_context_action(crate::context_menu::CtxAction::Delete, &f, cx);
+        let close = a.run_context_action(crate::views::context_menu::CtxAction::Delete, &f, cx);
         assert!(close, "第二次删除应关闭菜单");
     });
     assert!(!f.exists(), "文件未删除");
@@ -97,10 +105,10 @@ async fn case23_delete_two_phase_file_and_dir(cx: &mut TestAppContext) {
     std::fs::create_dir_all(d.join("nested")).unwrap();
     std::fs::write(d.join("nested").join("f.txt"), "y").unwrap();
     c.app.update(cx, |a, cx| {
-        let _ = a.run_context_action(crate::context_menu::CtxAction::Delete, &d, cx);
+        let _ = a.run_context_action(crate::views::context_menu::CtxAction::Delete, &d, cx);
     });
     c.app.update(cx, |a, cx| {
-        let _ = a.run_context_action(crate::context_menu::CtxAction::Delete, &d, cx);
+        let _ = a.run_context_action(crate::views::context_menu::CtxAction::Delete, &d, cx);
     });
     assert!(!d.exists(), "目录未递归删除");
 }
@@ -114,7 +122,7 @@ async fn case24_copy_paste_into_dir_with_suffix(cx: &mut TestAppContext) {
     let d = c.tmp.join("destdir");
     std::fs::create_dir_all(&d).unwrap();
 
-    use crate::context_menu::CtxAction;
+    use crate::views::context_menu::CtxAction;
     c.app.update(cx, |a, cx| {
         let _ = a.run_context_action(CtxAction::Copy, &f, cx);
         let _ = a.run_context_action(CtxAction::PasteInto, &d, cx);
@@ -140,7 +148,7 @@ async fn case25_cut_paste_moves(cx: &mut TestAppContext) {
     let d = c.tmp.join("mdir");
     std::fs::create_dir_all(&d).unwrap();
 
-    use crate::context_menu::CtxAction;
+    use crate::views::context_menu::CtxAction;
     c.app.update(cx, |a, cx| {
         let _ = a.run_context_action(CtxAction::Cut, &f, cx);
         let _ = a.run_context_action(CtxAction::PasteInto, &d, cx);
@@ -179,7 +187,7 @@ async fn case26_menu_close_and_mutex(cx: &mut TestAppContext) {
     });
     // 反向：菜单打开时点重命名 → 菜单关闭、改名弹窗出现
     c.app.update(cx, |a, cx| {
-        let _ = a.run_context_action(crate::context_menu::CtxAction::Rename, &f, cx);
+        let _ = a.run_context_action(crate::views::context_menu::CtxAction::Rename, &f, cx);
     });
     c.app.read_with(cx, |a, _| {
         assert!(a.rename_state.is_some(), "重命名弹窗未出现");
@@ -223,7 +231,7 @@ async fn case28_hidden_entries_menu_works(cx: &mut TestAppContext) {
     c.app.update(cx, |a, cx| {
         a.show_hidden = true;
         a.open_context_menu(h.clone(), 400., 400., (1920., 1080.), cx);
-        let _ = a.run_context_action(crate::context_menu::CtxAction::Rename, &h, cx);
+        let _ = a.run_context_action(crate::views::context_menu::CtxAction::Rename, &h, cx);
     });
     c.app.read_with(cx, |a, _| {
         let st = a.rename_state.as_ref().expect("隐藏条目重命名弹窗未出现");
@@ -236,7 +244,10 @@ async fn case28_hidden_entries_menu_works(cx: &mut TestAppContext) {
         }
         a.confirm_rename(cx);
     });
-    assert!(!h.exists() && c.tmp.join("renamed.txt").exists(), "隐藏条目重命名未生效");
+    assert!(
+        !h.exists() && c.tmp.join("renamed.txt").exists(),
+        "隐藏条目重命名未生效"
+    );
 }
 
 // ---------- 用例 29：enter_workspace 链（recents 置顶 + harness 重建） ----------
@@ -297,7 +308,7 @@ async fn case29_enter_workspace_updates_recents_and_harness(cx: &mut TestAppCont
 
 #[test]
 fn case35_reveal_command_shape_and_menu_consistency() {
-    use crate::context_menu::build_reveal_command;
+    use crate::views::context_menu::build_reveal_command;
     // macOS 分支：open -R <path>
     let cmd = build_reveal_command(std::path::Path::new("/tmp/x/f.txt"));
     let mut dbg = format!("{:?}", cmd);
@@ -308,6 +319,9 @@ fn case35_reveal_command_shape_and_menu_consistency() {
     // 目录与文件同样可用（open -R 对两者均反显其所在父目录并选中）
     let _ = build_reveal_command(std::path::Path::new("/tmp/x"));
     // CtxAction::Reveal 在 run_context_action 的 match 中（编译级确认已覆盖）
-    let acts = [crate::context_menu::CtxAction::Reveal];
-    assert!(matches!(acts[0], crate::context_menu::CtxAction::Reveal));
+    let acts = [crate::views::context_menu::CtxAction::Reveal];
+    assert!(matches!(
+        acts[0],
+        crate::views::context_menu::CtxAction::Reveal
+    ));
 }

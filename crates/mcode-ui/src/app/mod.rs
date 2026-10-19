@@ -6,16 +6,20 @@
 //! /goal 外层循环（check_goal_complete 裁判）、会话持久化（SessionStore）、指令系统。
 //! 渲染分发在 views.rs（四视图）与 chat_view.rs（chat 布局），指令与会话操作在 session_ops.rs。
 
+pub mod msg;
+pub mod runtime;
+pub mod session_ops;
+
 use gpui::{
-    actions, prelude::*, App as GpuiApp, Context, Entity, FocusHandle, Focusable, Render,
-    SharedString, Window,
+    App as GpuiApp, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window, actions,
+    prelude::*,
 };
 use mcode_core::agent::completion::{Candidate, CompletionState, InputHistory, Trigger};
-use mcode_core::agent::context::{build_goal_prompt, MAX_GOAL_ROUNDS};
-use mcode_core::config::Config;
+use mcode_core::agent::context::{MAX_GOAL_ROUNDS, build_goal_prompt};
 use mcode_core::agent::history::HistoryStore;
-use mcode_core::agent::runner::{run_agent_turn, TurnOpts, MAX_TOOL_TURNS};
+use mcode_core::agent::runner::{MAX_TOOL_TURNS, TurnOpts, run_agent_turn};
 use mcode_core::agent::{AgentEvent, Attachment, Message, Role};
+use mcode_core::config::Config;
 use mcode_core::permission::{Decision, Mode};
 use mcode_core::sessions::{SessionMeta, SessionStore};
 use mcode_core::tools::DisplayBlock;
@@ -24,10 +28,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::msg::{default_fold_for, trunc, ChatMsg, DiffLine, FoldState, PendingPermission};
-use crate::runtime::{event_sink, Harness, UiEvent, UiRuntime};
-use crate::session_ops::current_effort;
-use crate::text_input::{InputEvent, TextInput};
+use crate::app::msg::{ChatMsg, DiffLine, FoldState, PendingPermission, default_fold_for, trunc};
+use crate::app::runtime::{Harness, UiEvent, UiRuntime, event_sink};
+use crate::app::session_ops::current_effort;
+use crate::views::text_input::{InputEvent, TextInput};
 
 actions!(
     app,
@@ -117,9 +121,9 @@ pub struct App {
     /// 文件浏览器键上下文的焦点句柄（cmd-c/x/v 拦截）
     pub explorer_focus: gpui::FocusHandle,
     /// 右键上下文菜单（渲染为绝对定位浮层）
-    pub(crate) context_menu: Option<crate::context_menu::CtxMenu>,
+    pub(crate) context_menu: Option<crate::views::context_menu::CtxMenu>,
     /// 行内重命名弹窗（预填当前名 + 确认/取消）
-    pub(crate) rename_state: Option<crate::context_menu::RenameState>,
+    pub(crate) rename_state: Option<crate::views::context_menu::RenameState>,
 }
 /// 回合任务获取 hist 锁的等待上限（测试用 1s 加速锁超时用例）
 #[cfg(test)]
@@ -177,7 +181,7 @@ impl App {
             pending_permission: None,
             sessions: vec![],
             session: None,
-            file_tree: crate::file_explorer::scan_file_tree(&cwd, false),
+            file_tree: crate::views::file_explorer::scan_file_tree(&cwd, false),
             cwd,
             goal: None,
             goal_rounds: 0,
@@ -236,7 +240,7 @@ impl App {
 
     /// 构建 harness 并挂事件泵；失败不 panic（Notice 引导去设置）
     pub fn rebuild_harness(&mut self, cx: &mut Context<Self>) {
-        self.harness = match crate::runtime::build_harness(&self.cfg, &self.cwd, &self.rt) {
+        self.harness = match crate::app::runtime::build_harness(&self.cfg, &self.cwd, &self.rt) {
             Ok(h) => Some(Arc::new(h)),
             Err(e) => {
                 self.messages.push(ChatMsg::Notice {
@@ -254,7 +258,9 @@ impl App {
 
     /// 挂接 GPUI 事件泵：tokio channel → 主线程实体更新（WeakEntity::update，实体释放即退出）
     fn attach_pump(&mut self, cx: &mut Context<Self>) {
-        let Some(h) = self.harness.clone() else { return };
+        let Some(h) = self.harness.clone() else {
+            return;
+        };
         let Some(mut rx) = h.take_rx() else { return };
         cx.spawn(async move |this, cx| {
             while let Some(ev) = rx.recv().await {
@@ -311,7 +317,10 @@ impl App {
                 self.push_notice(format!("⚠ 引用未解析：{}", r.missing.join("、")), true);
             }
             for (p, url) in r.attachments {
-                attachments.push(Attachment { path: p, data_url: url });
+                attachments.push(Attachment {
+                    path: p,
+                    data_url: url,
+                });
             }
             turn_input = r.text;
         }
@@ -333,7 +342,10 @@ impl App {
             .into_iter()
             .map(SharedString::from)
             .collect();
-        self.messages.push(ChatMsg::User { text: text.into(), refs });
+        self.messages.push(ChatMsg::User {
+            text: text.into(),
+            refs,
+        });
         self.messages.push(ChatMsg::Running);
         self.running = true;
         self.start_turn(turn_input, attachments, cx);
@@ -345,7 +357,10 @@ impl App {
         let Some(h) = self.harness.clone() else {
             self.running = false;
             self.pop_running();
-            self.push_notice("未初始化完成，无法启动回合（cmd-, 打开设置）".to_string(), true);
+            self.push_notice(
+                "未初始化完成，无法启动回合（cmd-, 打开设置）".to_string(),
+                true,
+            );
             cx.notify();
             return;
         };
@@ -373,7 +388,9 @@ impl App {
                             HIST_LOCK_TIMEOUT.as_secs()
                         ),
                     }));
-                    let _ = ui_tx.send(UiEvent::Agent(AgentEvent::Done { reply: String::new() }));
+                    let _ = ui_tx.send(UiEvent::Agent(AgentEvent::Done {
+                        reply: String::new(),
+                    }));
                     return;
                 }
             };
@@ -400,13 +417,19 @@ impl App {
 
     /// spawn goal 完成裁判（独立单发调用，结果经 GoalCheck 事件回主线程）
     fn spawn_goal_check(&mut self) {
-        let Some(h) = self.harness.clone() else { return };
-        let Some(goal) = self.goal.clone() else { return };
+        let Some(h) = self.harness.clone() else {
+            return;
+        };
+        let Some(goal) = self.goal.clone() else {
+            return;
+        };
         let backend = h.deps.backend.clone();
         let cancel = h.deps.cancel_tx.subscribe();
         let ui_tx = h.ui_tx.clone();
         self.rt.spawn(async move {
-            let done = mcode_core::agent::context::check_goal_complete(backend.as_ref(), &goal, cancel).await;
+            let done =
+                mcode_core::agent::context::check_goal_complete(backend.as_ref(), &goal, cancel)
+                    .await;
             let _ = ui_tx.send(UiEvent::GoalCheck(done));
         });
     }
@@ -464,13 +487,22 @@ impl App {
                 if let Some(last) = self.messages.last_mut() {
                     match last {
                         ChatMsg::Running => {
-                            *last = ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded };
+                            *last = ChatMsg::Assistant {
+                                text: t.into(),
+                                fold: FoldState::Expanded,
+                            };
                         }
                         ChatMsg::Assistant { text, .. } => *text = format!("{text}{t}").into(),
-                        _ => self.messages.push(ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded }),
+                        _ => self.messages.push(ChatMsg::Assistant {
+                            text: t.into(),
+                            fold: FoldState::Expanded,
+                        }),
                     }
                 } else {
-                    self.messages.push(ChatMsg::Assistant { text: t.into(), fold: FoldState::Expanded });
+                    self.messages.push(ChatMsg::Assistant {
+                        text: t.into(),
+                        fold: FoldState::Expanded,
+                    });
                 }
             }
             // 思考增量：连续 Reasoning 合并进最后一个 Thinking 块（保留其展开状态）；
@@ -481,16 +513,32 @@ impl App {
                 } else {
                     self.messages.push(ChatMsg::Thinking {
                         text: text.into(),
-                        fold: if self.thinking_default_expanded { FoldState::Expanded } else { FoldState::Collapsed },
+                        fold: if self.thinking_default_expanded {
+                            FoldState::Expanded
+                        } else {
+                            FoldState::Collapsed
+                        },
                     });
                 }
                 // 流式贴底仅在展开态跟随（用户切走折叠后不打扰滚动位置）
-                if self.messages.last().is_some_and(|m| matches!(m, ChatMsg::Thinking { fold: FoldState::Expanded, .. })) {
+                if self.messages.last().is_some_and(|m| {
+                    matches!(
+                        m,
+                        ChatMsg::Thinking {
+                            fold: FoldState::Expanded,
+                            ..
+                        }
+                    )
+                }) {
                     self.thinking_scroll.scroll_to_bottom();
                 }
                 cx.notify();
             }
-            AgentEvent::Retrying { attempt, max, reason } => {
+            AgentEvent::Retrying {
+                attempt,
+                max,
+                reason,
+            } => {
                 self.push_notice(format!("↻ 流式重试 {attempt}/{max}：{reason}"), false);
             }
             // 工具卡起步：push 卡片（结果事件按"最后一个同名 running 卡"回填）
@@ -535,9 +583,16 @@ impl App {
                                 text: l.text.clone().into(),
                             })
                             .collect();
-                        self.messages.push(ChatMsg::Diff { path: path.into(), lines: mapped });
+                        self.messages.push(ChatMsg::Diff {
+                            path: path.into(),
+                            lines: mapped,
+                        });
                     }
-                    Some(DisplayBlock::Output { stdout, stderr, code }) => {
+                    Some(DisplayBlock::Output {
+                        stdout,
+                        stderr,
+                        code,
+                    }) => {
                         let mut text = stdout;
                         if !stderr.is_empty() {
                             if !text.is_empty() {
@@ -554,7 +609,10 @@ impl App {
                     }
                     Some(DisplayBlock::FileRef { path, lines }) => {
                         if !lines.trim().is_empty() {
-                            self.push_notice(format!("📄 {path}\n{}", trunc(lines.trim(), 400)), false);
+                            self.push_notice(
+                                format!("📄 {path}\n{}", trunc(lines.trim(), 400)),
+                                false,
+                            );
                         }
                     }
                     None => {}
@@ -577,7 +635,9 @@ impl App {
                     cx.notify();
                     return;
                 }
-                if !reply.is_empty() && !matches!(self.messages.last(), Some(ChatMsg::Assistant { .. })) {
+                if !reply.is_empty()
+                    && !matches!(self.messages.last(), Some(ChatMsg::Assistant { .. }))
+                {
                     self.messages.push(ChatMsg::Assistant {
                         text: reply.clone().into(),
                         fold: default_fold_for(&reply),
@@ -598,7 +658,10 @@ impl App {
                     self.spawn_goal_check();
                 } else {
                     if self.goal.is_some() {
-                        self.push_notice("🎯 goal 循环已终止（回合被打断或出错）".to_string(), false);
+                        self.push_notice(
+                            "🎯 goal 循环已终止（回合被打断或出错）".to_string(),
+                            false,
+                        );
                         self.goal = None;
                         self.goal_rounds = 0;
                     }
@@ -631,7 +694,11 @@ impl App {
     fn pop_running(&mut self) {
         // 从尾部扫描移除 Running 占位——不能假设它是最后一条
         // （错误 Notice / 模型切换 Notice 会插在它后面，曾致"运行中"永久滞留）
-        if let Some(idx) = self.messages.iter().rposition(|m| matches!(m, ChatMsg::Running)) {
+        if let Some(idx) = self
+            .messages
+            .iter()
+            .rposition(|m| matches!(m, ChatMsg::Running))
+        {
             self.messages.remove(idx);
         }
     }
@@ -701,7 +768,11 @@ impl App {
             self.candidates = match self.completion.trigger {
                 Some(Trigger::Slash) => mcode_core::commands::filter_commands(&q)
                     .into_iter()
-                    .map(|c| Candidate { name: c.name.into(), desc: c.desc.into(), is_dir: false })
+                    .map(|c| Candidate {
+                        name: c.name.into(),
+                        desc: c.desc.into(),
+                        is_dir: false,
+                    })
                     .collect(),
                 Some(Trigger::At) => self
                     .file_tree
@@ -720,7 +791,6 @@ impl App {
             self.candidates.clear();
         }
     }
-
 }
 
 impl Focusable for App {
@@ -731,6 +801,6 @@ impl Focusable for App {
 
 impl Render for App {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::chat_view::render_app(self, window, cx)
+        crate::views::chat_view::render_app(self, window, cx)
     }
 }

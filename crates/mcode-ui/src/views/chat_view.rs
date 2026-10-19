@@ -7,17 +7,17 @@
 //! 共享渲染小件（badge / tool_icon）也在这里，供 views.rs 的页面视图复用。
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, Div, Focusable, InteractiveElement,
-    StatefulInteractiveElement, SharedString, Window,
+    AnyElement, Context, Div, Focusable, InteractiveElement, SharedString,
+    StatefulInteractiveElement, Window, div, prelude::*, px, rgb,
 };
-use mcode_core::permission::Decision;
 use mcode_core::agent::context::MAX_GOAL_ROUNDS;
+use mcode_core::permission::Decision;
 
+use crate::app::msg::ChatMsg;
+use crate::app::msg::trunc;
 use crate::app::{App, View};
-use crate::msg::trunc;
-use crate::msg::ChatMsg;
-use crate::sidebar_view::{render_sidebar, render_sidebar_collapsed};
-use crate::theme::*;
+use crate::views::sidebar_view::{render_sidebar, render_sidebar_collapsed};
+use crate::views::theme::*;
 
 /// 渲染分发：Onboarding / Settings / Extensions / Sessions / Chat
 pub(crate) fn render_app(app: &mut App, window: &mut Window, cx: &mut Context<App>) -> AnyElement {
@@ -27,19 +27,28 @@ pub(crate) fn render_app(app: &mut App, window: &mut Window, cx: &mut Context<Ap
         View::Extensions => crate::views::render_extensions(app, cx),
         View::Sessions => crate::views::render_sessions(app, cx),
         View::Chat => render_chat(app, window, cx),
-        View::WorkspacePicker => crate::workspace_picker::render_workspace_picker(app, cx),
+        View::WorkspacePicker => crate::views::workspace_picker::render_workspace_picker(app, cx),
     }
 }
 
 fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> AnyElement {
     let mc = mode_color(app.mode);
-    let model_label: SharedString =
-        format!("🧠 {}", app.cfg.active_model().unwrap_or_else(|| "未选择模型".into())).into();
+    let model_label: SharedString = format!(
+        "🧠 {}",
+        app.cfg
+            .active_model()
+            .unwrap_or_else(|| "未选择模型".into())
+    )
+    .into();
     let cwd_label: SharedString = trunc(&app.cwd.to_string_lossy(), 46).into();
     let mode_label: SharedString = format!("⇥ {}", app.mode.label()).into();
     let goal_badge = app.goal.as_ref().map(|g| {
-        let label: SharedString =
-            format!("🎯 {g}（{r}/{max}）", r = app.goal_rounds, max = MAX_GOAL_ROUNDS).into();
+        let label: SharedString = format!(
+            "🎯 {g}（{r}/{max}）",
+            r = app.goal_rounds,
+            max = MAX_GOAL_ROUNDS
+        )
+        .into();
         badge(label, YELLOW)
     });
 
@@ -123,13 +132,9 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child(
-                        div()
-                            .text_color(YELLOW)
-                            .child(SharedString::from(format!(
-                                "⚠ 权限确认 — {mode_label} 模式：{tool}"
-                            ))),
-                    )
+                    .child(div().text_color(YELLOW).child(SharedString::from(format!(
+                        "⚠ 权限确认 — {mode_label} 模式：{tool}"
+                    ))))
                     .child(
                         div()
                             .rounded_md()
@@ -141,16 +146,33 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                             .child(args),
                     )
                     .child(
-                        div().flex().gap_2()
-                            .child(perm_btn("允许", BORDER_STRONG, TEXT_1, cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                this.resolve_permission(Decision::Allow, cx);
-                            })))
-                            .child(perm_btn("总是允许", GREEN, GREEN, cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                this.resolve_permission(Decision::AllowAlways, cx);
-                            })))
-                            .child(perm_btn("拒绝", RED, RED, cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                                this.resolve_permission(Decision::Deny, cx);
-                            }))),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(perm_btn(
+                                "允许",
+                                BORDER_STRONG,
+                                TEXT_1,
+                                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.resolve_permission(Decision::Allow, cx);
+                                }),
+                            ))
+                            .child(perm_btn(
+                                "总是允许",
+                                GREEN,
+                                GREEN,
+                                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.resolve_permission(Decision::AllowAlways, cx);
+                                }),
+                            ))
+                            .child(perm_btn(
+                                "拒绝",
+                                RED,
+                                RED,
+                                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    this.resolve_permission(Decision::Deny, cx);
+                                }),
+                            )),
                     ),
             )
     });
@@ -372,21 +394,26 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                         ),
                 )
                 .when(app.explorer_visible, |d| {
-                    d.child(crate::file_explorer::render_file_explorer(app, cx))
+                    d.child(crate::views::file_explorer::render_file_explorer(app, cx))
                 }),
         )
         // 浮层必须挂在最后——gpui 按树序绘制，先挂的兄弟会被后画的主内容盖住
         // （用户实测：右键菜单被文件浏览器面板遮挡）
         .when_some(perm_overlay, |d, ov| d.child(ov))
-        .when_some(crate::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
-        .when_some(crate::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
+        .when_some(crate::views::file_explorer::render_rename_modal(app, cx), |d, m| d.child(m))
+        .when_some(crate::views::context_menu::render_context_menu(app, cx), |d, m| d.child(m))
         .into_any_element()
 }
 
 // ---------- 消息渲染 ----------
 
 /// 消息折叠头部行（💭/回复 · 行数 · ▾/▸，点击循环三态）
-fn fold_head(id: &'static str, label: SharedString, idx: usize, cx: &mut Context<App>) -> gpui::Stateful<gpui::Div> {
+fn fold_head(
+    id: &'static str,
+    label: SharedString,
+    idx: usize,
+    cx: &mut Context<App>,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(SharedString::from(format!("{id}-{idx}")))
         .flex()
@@ -402,7 +429,13 @@ fn fold_head(id: &'static str, label: SharedString, idx: usize, cx: &mut Context
         .child(label)
 }
 
-fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandle, cx: &mut Context<App>) -> AnyElement {
+fn render_msg(
+    idx: usize,
+    is_last: bool,
+    m: &ChatMsg,
+    scroll: &gpui::ScrollHandle,
+    cx: &mut Context<App>,
+) -> AnyElement {
     match m {
         ChatMsg::User { text, refs } => div()
             .mb_3()
@@ -431,18 +464,22 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
         ChatMsg::Assistant { text, fold } => {
             let n_lines = text.lines().count();
             let head: SharedString = match fold {
-                crate::msg::FoldState::Expanded => format!("▾ 回复 · {n_lines} 行").into(),
-                crate::msg::FoldState::Preview => format!("▸ 回复 · 前 10 行 / 共 {n_lines} 行").into(),
-                crate::msg::FoldState::Collapsed => format!("▸ 回复 · 共 {n_lines} 行").into(),
+                crate::app::msg::FoldState::Expanded => format!("▾ 回复 · {n_lines} 行").into(),
+                crate::app::msg::FoldState::Preview => {
+                    format!("▸ 回复 · 前 10 行 / 共 {n_lines} 行").into()
+                }
+                crate::app::msg::FoldState::Collapsed => format!("▸ 回复 · 共 {n_lines} 行").into(),
             };
             let body = match fold {
-                crate::msg::FoldState::Expanded => crate::markdown_view::render_markdown(text),
-                crate::msg::FoldState::Preview => {
+                crate::app::msg::FoldState::Expanded => {
+                    crate::views::markdown_view::render_markdown(text)
+                }
+                crate::app::msg::FoldState::Preview => {
                     // 预览：前 10 行对应的 markdown（尾部提示在头部行）
                     let head_part: String = text.lines().take(10).collect::<Vec<_>>().join("\n");
-                    crate::markdown_view::render_markdown(&head_part)
+                    crate::views::markdown_view::render_markdown(&head_part)
                 }
-                crate::msg::FoldState::Collapsed => {
+                crate::app::msg::FoldState::Collapsed => {
                     let first: SharedString = trunc(text.lines().next().unwrap_or(""), 80).into();
                     div().text_color(TEXT_2).text_size(px(12.5)).child(first)
                 }
@@ -458,12 +495,16 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
         ChatMsg::Thinking { text, fold } => {
             let count = text.chars().count();
             let state_label = match fold {
-                crate::msg::FoldState::Expanded => "▾",
+                crate::app::msg::FoldState::Expanded => "▾",
                 _ => "▸",
             };
             let head: SharedString = format!(
                 "💭 {} · {count} 字符 {state_label}",
-                if is_last { "思考中…" } else { "思考过程" }
+                if is_last {
+                    "思考中…"
+                } else {
+                    "思考过程"
+                }
             )
             .into();
             let base = div()
@@ -474,7 +515,7 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                 .border_color(BORDER)
                 .bg(BG_PANEL);
             match fold {
-                crate::msg::FoldState::Expanded => base
+                crate::app::msg::FoldState::Expanded => base
                     .flex()
                     .flex_col()
                     .child(fold_head("think-head", head, idx, cx))
@@ -495,7 +536,7 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                             .text_color(TEXT_3)
                             .child(SharedString::from(trunc(text, 30_000))),
                     ),
-                crate::msg::FoldState::Preview => base
+                crate::app::msg::FoldState::Preview => base
                     .flex()
                     .flex_col()
                     .child(fold_head("think-head", head, idx, cx))
@@ -514,10 +555,18 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                             .text_color(TEXT_3)
                             .child(SharedString::from(trunc(text, 3_000))),
                     ),
-                crate::msg::FoldState::Collapsed => base.child(fold_head("think-head", head, idx, cx)),
+                crate::app::msg::FoldState::Collapsed => {
+                    base.child(fold_head("think-head", head, idx, cx))
+                }
             }
         }
-        ChatMsg::ToolCard { name, args, summary, running, success } => {
+        ChatMsg::ToolCard {
+            name,
+            args,
+            summary,
+            running,
+            success,
+        } => {
             let (icon, color) = tool_icon(name);
             let status: SharedString = if *running {
                 "◌ 运行中".into()
@@ -582,7 +631,13 @@ fn render_msg(idx: usize, is_last: bool, m: &ChatMsg, scroll: &gpui::ScrollHandl
                 } else {
                     (BG_WINDOW, TEXT_3)
                 };
-                let prefix = if l.add { "+" } else if l.del { "-" } else { " " };
+                let prefix = if l.add {
+                    "+"
+                } else if l.del {
+                    "-"
+                } else {
+                    " "
+                };
                 wrap = wrap.child(
                     div()
                         .bg(bg)

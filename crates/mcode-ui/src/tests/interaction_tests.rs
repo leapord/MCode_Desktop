@@ -7,17 +7,19 @@
 //! MockBackend 按调用序脚本化返回，事件经 take_rx 的 channel 由测试泵回 on_ui_event。
 
 use crate::app::App;
-use crate::file_explorer::scan_file_tree;
 use crate::app::View;
-use crate::msg::ChatMsg;
-use crate::runtime::{build_harness_with_backend, UiEvent};
+use crate::app::msg::ChatMsg;
+use crate::app::runtime::{UiEvent, build_harness_with_backend};
+use crate::views::file_explorer::scan_file_tree;
 use gpui::{AppContext, Entity, TestAppContext};
-use mcode_core::agent::{ApiMessage, AgentEvent, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall};
+use mcode_core::agent::{
+    AgentEvent, ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall,
+};
 use mcode_core::config::{Config, Provider};
 use mcode_core::permission::{Decision, Mode, Verdict};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::watch;
 
 // ---------- 脚本化 MockBackend ----------
@@ -28,7 +30,6 @@ pub(crate) enum Step {
     Turn(StreamTurn),
     /// 直接报错（文案避免触发 runner 的瞬时错误重试词表）
     Fail(String),
-
 }
 
 struct ScriptMock {
@@ -47,7 +48,10 @@ struct HangMock {
 
 impl HangMock {
     fn new(replies: Vec<StreamTurn>) -> Self {
-        Self { hang: std::sync::atomic::AtomicBool::new(true), replies: std::sync::Mutex::new(replies) }
+        Self {
+            hang: std::sync::atomic::AtomicBool::new(true),
+            replies: std::sync::Mutex::new(replies),
+        }
     }
 
     fn disarm(&self) {
@@ -72,7 +76,10 @@ impl ModelBackend for HangMock {
             let mut c = cancel;
             loop {
                 if *c.borrow() {
-                    return Ok(StreamTurn { interrupted: true, ..Default::default() });
+                    return Ok(StreamTurn {
+                        interrupted: true,
+                        ..Default::default()
+                    });
                 }
                 let _ = c.changed().await;
             }
@@ -167,7 +174,10 @@ impl Drop for Ctx {
 }
 
 pub(crate) fn turn(reply: &str) -> Step {
-    Step::Turn(StreamTurn { reply: reply.into(), ..Default::default() })
+    Step::Turn(StreamTurn {
+        reply: reply.into(),
+        ..Default::default()
+    })
 }
 
 pub(crate) fn make_temp_dir() -> PathBuf {
@@ -205,7 +215,12 @@ pub(crate) fn setup(cx: &mut TestAppContext, steps: Vec<Step>) -> Ctx {
 }
 
 /// 泵事件：channel 里所有 UiEvent → on_ui_event，直到条件满足或超时
-pub(crate) fn wait(cx: &mut TestAppContext, ctx: &mut Ctx, cond: impl Fn(&App) -> bool, ms: u64) -> bool {
+pub(crate) fn wait(
+    cx: &mut TestAppContext,
+    ctx: &mut Ctx,
+    cond: impl Fn(&App) -> bool,
+    ms: u64,
+) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     loop {
         while let Ok(ev) = ctx.rx.try_recv() {
@@ -235,16 +250,23 @@ async fn case01_plain_turn_streams_and_finishes(cx: &mut TestAppContext) {
     let mut c = setup(cx, vec![turn("你好，世界！")]);
     c.app.update(cx, |a, cx| a.send("hello".into(), cx));
     assert!(
-        wait(cx, &mut c, |a| !a.running
-            && matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text.contains("你好，世界")),
-        5_000),
+        wait(
+            cx,
+            &mut c,
+            |a| !a.running
+                && matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text.contains("你好，世界")),
+            5_000
+        ),
         "回合未完成: {:?}",
         c.app.read_with(cx, |a, _| a.messages.clone())
     );
     c.app.read_with(cx, |a, _| {
         assert!(matches!(&a.messages[0], ChatMsg::User { text, .. } if text == "hello"));
         assert!(a.session.is_some(), "会话未落盘");
-        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+        assert!(
+            !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
+            "Running 残留"
+        );
     });
 }
 
@@ -256,9 +278,13 @@ async fn case02_tool_turn_runs_and_feeds_back(cx: &mut TestAppContext) {
     assert!(wait(cx, &mut c, |a| !a.running, 5_000), "工具回合未完成");
     c.app.read_with(cx, |a, _| {
         let card = a.messages.iter().find_map(|m| match m {
-            ChatMsg::ToolCard { name, running, success, summary, .. } => {
-                Some((name.clone(), *running, *success, summary.clone()))
-            }
+            ChatMsg::ToolCard {
+                name,
+                running,
+                success,
+                summary,
+                ..
+            } => Some((name.clone(), *running, *success, summary.clone())),
             _ => None,
         });
         let (name, running, success, summary) = card.expect("无 ToolCard");
@@ -266,16 +292,24 @@ async fn case02_tool_turn_runs_and_feeds_back(cx: &mut TestAppContext) {
         assert!(!running, "工具卡未回填");
         assert!(success, "工具失败");
         assert!(summary.contains("hi"), "输出摘要缺失: {summary}");
-        assert!(matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "done"));
+        assert!(
+            matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "done")
+        );
         // bash 的 display Output → Notice（exit 0）
-        assert!(has_notice(a, "exit 0"), "bash Output display 未渲染为 Notice");
+        assert!(
+            has_notice(a, "exit 0"),
+            "bash Output display 未渲染为 Notice"
+        );
     });
 }
 
 // ---------- 用例 3：打断后输入（本批 bug 回归） ----------
 #[gpui::test]
 async fn case03_interrupt_during_hang_then_recover(cx: &mut TestAppContext) {
-    let mock = Arc::new(HangMock::new(vec![StreamTurn { reply: "second-ok".into(), ..Default::default() }]));
+    let mock = Arc::new(HangMock::new(vec![StreamTurn {
+        reply: "second-ok".into(),
+        ..Default::default()
+    }]));
     let mut c = setup_backend(cx, mock.clone());
     c.app.update(cx, |a, cx| a.send("first".into(), cx));
     assert!(wait(cx, &mut c, |a| a.running, 5_000), "回合未启动");
@@ -283,9 +317,12 @@ async fn case03_interrupt_during_hang_then_recover(cx: &mut TestAppContext) {
     // 预算放宽：全套件并行运行时 tokio 线程与真实 bash 进程竞争调度，
     // 5s 在高负载机器上可能不够（实测 flaky）
     assert!(
-        wait(cx, &mut c, |a| !a.running
-            && !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
-            20_000),
+        wait(
+            cx,
+            &mut c,
+            |a| !a.running && !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
+            20_000
+        ),
         "ESC 后未收尾"
     );
     // 解除挂起（旧任务可能已在流中挂起、也可能尚未启动即被打断——两种时序都覆盖）
@@ -293,9 +330,15 @@ async fn case03_interrupt_during_hang_then_recover(cx: &mut TestAppContext) {
     // 打断后的空回复不落 hist/会话；第二轮正常完成
     c.app.update(cx, |a, cx| a.send("second".into(), cx));
     assert!(
-        wait(cx, &mut c, |a| !a.running
-            && a.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { text, .. } if text == "second-ok")),
-        5_000),
+        wait(
+            cx,
+            &mut c,
+            |a| !a.running
+                && a.messages
+                    .iter()
+                    .any(|m| matches!(m, ChatMsg::Assistant { text, .. } if text == "second-ok")),
+            5_000
+        ),
         "打断后新回合未完成（回归失败）: messages={:?}",
         c.app.read_with(cx, |a, _| a.messages.clone())
     );
@@ -318,7 +361,11 @@ async fn case04_queue_drains_in_order(cx: &mut TestAppContext) {
     );
     c.app.read_with(cx, |a, _| {
         assert!(matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "r3"));
-        let users = a.messages.iter().filter(|m| matches!(m, ChatMsg::User { .. })).count();
+        let users = a
+            .messages
+            .iter()
+            .filter(|m| matches!(m, ChatMsg::User { .. }))
+            .count();
         assert_eq!(users, 3);
     });
 }
@@ -333,12 +380,19 @@ async fn case05_error_then_recover(cx: &mut TestAppContext) {
         "错误未收尾"
     );
     c.app.read_with(cx, |a, _| {
-        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+        assert!(
+            !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
+            "Running 残留"
+        );
     });
     c.app.update(cx, |a, cx| a.send("y".into(), cx));
     assert!(
-        wait(cx, &mut c, |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "ok-now"),
-        5_000),
+        wait(
+            cx,
+            &mut c,
+            |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "ok-now"),
+            5_000
+        ),
         "错误后无法恢复"
     );
 }
@@ -346,12 +400,15 @@ async fn case05_error_then_recover(cx: &mut TestAppContext) {
 // ---------- 用例 6：goal 循环 ----------
 #[gpui::test]
 async fn case06_goal_loop_reaches_completion(cx: &mut TestAppContext) {
-    let mut c = setup(cx, vec![
-        turn("r1"),
-        turn("GOAL_CONTINUE"),
-        turn("r2"),
-        turn("GOAL_COMPLETE"),
-    ]);
+    let mut c = setup(
+        cx,
+        vec![
+            turn("r1"),
+            turn("GOAL_CONTINUE"),
+            turn("r2"),
+            turn("GOAL_COMPLETE"),
+        ],
+    );
     c.app.update(cx, |a, _| {
         a.goal = Some("ship it".into());
     });
@@ -365,11 +422,16 @@ async fn case06_goal_loop_reaches_completion(cx: &mut TestAppContext) {
         assert!(has_notice(a, "goal 第 1 轮"), "缺续轮 Notice");
         assert!(has_notice(a, "goal 已达成"), "缺达成 Notice");
         assert!(
-            a.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { text, .. } if text == "r2")),
+            a.messages
+                .iter()
+                .any(|m| matches!(m, ChatMsg::Assistant { text, .. } if text == "r2")),
             "第二轮回复缺失: {:?}",
             a.messages
         );
-        assert!(matches!(a.messages.last(), Some(ChatMsg::Notice { .. })), "收官后末尾应是 Notice");
+        assert!(
+            matches!(a.messages.last(), Some(ChatMsg::Notice { .. })),
+            "收官后末尾应是 Notice"
+        );
     });
 }
 
@@ -399,8 +461,18 @@ async fn case07_goal_rounds_cap_terminates(cx: &mut TestAppContext) {
 // ---------- 用例 8：/clear 与新建会话 ----------
 #[gpui::test]
 async fn case08_clear_and_new_chat_reset_state(cx: &mut TestAppContext) {
-    let mut c = setup(cx, vec![turn("这是一个足够长的回复内容，用来让历史 token 估算大于零。")]);
-    c.app.update(cx, |a, cx| a.send("这是一个足够长的提问，用来让历史 token 估算大于零。".into(), cx));
+    let mut c = setup(
+        cx,
+        vec![turn(
+            "这是一个足够长的回复内容，用来让历史 token 估算大于零。",
+        )],
+    );
+    c.app.update(cx, |a, cx| {
+        a.send(
+            "这是一个足够长的提问，用来让历史 token 估算大于零。".into(),
+            cx,
+        )
+    });
     assert!(wait(cx, &mut c, |a| !a.running, 5_000), "回合未完成");
     let est_before = c.app.read_with(cx, |a, _| {
         a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(1)
@@ -412,7 +484,10 @@ async fn case08_clear_and_new_chat_reset_state(cx: &mut TestAppContext) {
     c.app.read_with(cx, |a, _| {
         assert!(a.messages.is_empty(), "/clear 未清消息");
         assert!(a.session.is_none(), "/clear 未清会话");
-        assert_eq!(a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(9), 0);
+        assert_eq!(
+            a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(9),
+            0
+        );
         assert_eq!(a.view, View::Chat);
     });
     c.app.update(cx, |a, _cx| {
@@ -429,19 +504,22 @@ async fn case09_compact_shrinks_history(cx: &mut TestAppContext) {
     c.app.update(cx, |a, _| {
         let mut h = a.hist.try_lock().unwrap();
         for i in 0..10 {
-            h.push_turn(format!("u{i}-{}", "长".repeat(1000)), format!("a{i}-{}", "复".repeat(1000)));
+            h.push_turn(
+                format!("u{i}-{}", "长".repeat(1000)),
+                format!("a{i}-{}", "复".repeat(1000)),
+            );
         }
     });
-    let before = c
-        .app
-        .read_with(cx, |a, _| a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0));
+    let before = c.app.read_with(cx, |a, _| {
+        a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0)
+    });
     assert!(before > 4000, "前置 estimate 异常: {before}");
     c.app.update(cx, |a, cx| {
         assert!(a.handle_command("/compact", cx));
     });
-    let after = c
-        .app
-        .read_with(cx, |a, _| a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0));
+    let after = c.app.read_with(cx, |a, _| {
+        a.hist.try_lock().map(|h| h.estimate_tokens()).unwrap_or(0)
+    });
     assert!(after < before, "压缩未生效: {before} → {after}");
     c.app.read_with(cx, |a, _| {
         assert!(has_notice(a, "压缩"), "缺压缩 Notice");
@@ -451,31 +529,66 @@ async fn case09_compact_shrinks_history(cx: &mut TestAppContext) {
 // ---------- 用例 10：权限三路（允许 / 总是允许；拒绝在用例 11） ----------
 #[gpui::test]
 async fn case10_permission_allow_and_always(cx: &mut TestAppContext) {
-    let mut c = setup(cx, vec![
-        ScriptMock::tool_call_turn(""),
-        turn("d1"),
-        ScriptMock::tool_call_turn(""),
-        turn("d2"),
-        ScriptMock::tool_call_turn(""),
-        turn("d3"),
-    ]);
+    let mut c = setup(
+        cx,
+        vec![
+            ScriptMock::tool_call_turn(""),
+            turn("d1"),
+            ScriptMock::tool_call_turn(""),
+            turn("d2"),
+            ScriptMock::tool_call_turn(""),
+            turn("d3"),
+        ],
+    );
     c.app.update(cx, |a, _| {
-        a.harness.as_ref().unwrap().deps.perms.try_lock().unwrap().set_mode(Mode::Manual);
+        a.harness
+            .as_ref()
+            .unwrap()
+            .deps
+            .perms
+            .try_lock()
+            .unwrap()
+            .set_mode(Mode::Manual);
         a.mode = Mode::Manual;
     });
     // cycle1：Confirm → 允许
     c.app.update(cx, |a, cx| a.send("go1".into(), cx));
-    assert!(wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000), "未弹权限确认");
-    c.app.read_with(cx, |a, _| assert_eq!(a.pending_permission.as_ref().unwrap().tool, "bash"));
-    c.app.update(cx, |a, cx| a.resolve_permission(Decision::Allow, cx));
-    assert!(wait(cx, &mut c, |a| !a.running && a.pending_permission.is_none(), 5_000), "允许后未收尾");
+    assert!(
+        wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000),
+        "未弹权限确认"
+    );
+    c.app.read_with(cx, |a, _| {
+        assert_eq!(a.pending_permission.as_ref().unwrap().tool, "bash")
+    });
+    c.app
+        .update(cx, |a, cx| a.resolve_permission(Decision::Allow, cx));
+    assert!(
+        wait(
+            cx,
+            &mut c,
+            |a| !a.running && a.pending_permission.is_none(),
+            5_000
+        ),
+        "允许后未收尾"
+    );
     // cycle2：Confirm → 总是允许（会话内沉淀）
     c.app.update(cx, |a, cx| a.send("go2".into(), cx));
-    assert!(wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000), "第二次未弹确认");
-    c.app.update(cx, |a, cx| a.resolve_permission(Decision::AllowAlways, cx));
+    assert!(
+        wait(cx, &mut c, |a| a.pending_permission.is_some(), 5_000),
+        "第二次未弹确认"
+    );
+    c.app
+        .update(cx, |a, cx| a.resolve_permission(Decision::AllowAlways, cx));
     assert!(wait(cx, &mut c, |a| !a.running, 5_000), "总是允许后未收尾");
     c.app.read_with(cx, |a, _| {
-        let v = a.harness.as_ref().unwrap().deps.perms.try_lock().unwrap()
+        let v = a
+            .harness
+            .as_ref()
+            .unwrap()
+            .deps
+            .perms
+            .try_lock()
+            .unwrap()
             .evaluate("bash", false, "");
         assert!(matches!(v, Verdict::Allow), "AllowAlways 未沉淀");
     });
@@ -498,7 +611,10 @@ async fn case11_esc_priority_chain(cx: &mut TestAppContext) {
     });
     c.app.update(cx, |a, _| {
         assert!(a.completion.is_open(), "补全未触发");
-        assert!(a.candidates.iter().any(|c| c.name == "/clear"), "指令候选缺失");
+        assert!(
+            a.candidates.iter().any(|c| c.name == "/clear"),
+            "指令候选缺失"
+        );
     });
     c.app.update(cx, |a, cx| a.interrupt(cx));
     c.app.read_with(cx, |a, _| {
@@ -509,14 +625,16 @@ async fn case11_esc_priority_chain(cx: &mut TestAppContext) {
     // ② 权限弹窗 → ESC = Deny 回传
     let (tx, mut rx) = tokio::sync::oneshot::channel();
     c.app.update(cx, |a, _| {
-        a.pending_permission = Some(crate::msg::PendingPermission {
+        a.pending_permission = Some(crate::app::msg::PendingPermission {
             tool: "bash".into(),
             args_summary: "echo hi".into(),
             respond: Some(tx),
         });
     });
     c.app.update(cx, |a, cx| a.interrupt(cx));
-    c.app.read_with(cx, |a, _| assert!(a.pending_permission.is_none(), "ESC 未清弹窗"));
+    c.app.read_with(cx, |a, _| {
+        assert!(a.pending_permission.is_none(), "ESC 未清弹窗")
+    });
     let decision = match rx.try_recv() {
         Ok(d) => d,
         Err(_) => panic!("Deny 未回传"),
@@ -535,30 +653,48 @@ async fn case12_hist_lock_timeout_defense(cx: &mut TestAppContext) {
     let guard = hist.try_lock().unwrap();
     c.app.update(cx, |a, cx| a.send("blocked".into(), cx));
     assert!(
-        wait(cx, &mut c, |a| !a.running && has_notice(a, "锁被占用"), 8_000),
+        wait(
+            cx,
+            &mut c,
+            |a| !a.running && has_notice(a, "锁被占用"),
+            8_000
+        ),
         "锁超时防御未生效"
     );
     c.app.read_with(cx, |a, _| {
-        assert!(!a.messages.iter().any(|m| matches!(m, ChatMsg::Running)), "Running 残留");
+        assert!(
+            !a.messages.iter().any(|m| matches!(m, ChatMsg::Running)),
+            "Running 残留"
+        );
     });
     drop(guard);
     // 锁释放后新回合正常完成
     c.app.update(cx, |a, cx| a.send("after".into(), cx));
     assert!(
-        wait(cx, &mut c, |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "later"),
-        5_000),
+        wait(
+            cx,
+            &mut c,
+            |a| matches!(a.messages.last(), Some(ChatMsg::Assistant { text, .. }) if text == "later"),
+            5_000
+        ),
         "锁释放后新回合未完成"
     );
 }
 
 #[test]
 fn watch_isolation() {
-    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
     let (tx, rx) = tokio::sync::watch::channel(false);
     let h = rt.spawn(async move {
         let mut c = rx;
         loop {
-            if *c.borrow() { return 1u8; }
+            if *c.borrow() {
+                return 1u8;
+            }
             let _ = c.changed().await;
         }
     });
@@ -576,16 +712,22 @@ async fn case16_thinking_block_streams_expanded(cx: &mut TestAppContext) {
     let c = setup(cx, vec![turn("done")]);
     // 直接注入 Reasoning 事件（泵已在事件链路，等价 on_agent_event 路径）
     c.app.update(cx, |a, cx| {
-        a.on_agent_event(mcode_core::agent::AgentEvent::Reasoning {
-            text: "先读源码".into(),
-            scope: None,
-        }, cx);
+        a.on_agent_event(
+            mcode_core::agent::AgentEvent::Reasoning {
+                text: "先读源码".into(),
+                scope: None,
+            },
+            cx,
+        );
     });
     c.app.update(cx, |a, cx| {
-        a.on_agent_event(mcode_core::agent::AgentEvent::Reasoning {
-            text: "，再写测试".into(),
-            scope: None,
-        }, cx);
+        a.on_agent_event(
+            mcode_core::agent::AgentEvent::Reasoning {
+                text: "，再写测试".into(),
+                scope: None,
+            },
+            cx,
+        );
     });
     c.app.read_with(cx, |a, _| {
         let t = a.messages.iter().find_map(|m| match m {
@@ -593,7 +735,11 @@ async fn case16_thinking_block_streams_expanded(cx: &mut TestAppContext) {
             _ => None,
         });
         let (text, fold) = t.expect("无 Thinking 块");
-        assert_eq!(fold, crate::msg::FoldState::Expanded, "默认应展开（thinking_default_expanded=true）");
+        assert_eq!(
+            fold,
+            crate::app::msg::FoldState::Expanded,
+            "默认应展开（thinking_default_expanded=true）"
+        );
         assert_eq!(text, "先读源码，再写测试", "Reasoning 增量未累计");
     });
 }
@@ -603,25 +749,39 @@ async fn case16_thinking_block_streams_expanded(cx: &mut TestAppContext) {
 async fn case17_thinking_append_keeps_expanded_state(cx: &mut TestAppContext) {
     let c = setup(cx, vec![turn("x")]);
     c.app.update(cx, |a, cx| {
-        a.on_agent_event(AgentEvent::Reasoning { text: "a".into(), scope: None }, cx);
+        a.on_agent_event(
+            AgentEvent::Reasoning {
+                text: "a".into(),
+                scope: None,
+            },
+            cx,
+        );
     });
     // 用户手动折叠
     c.app.update(cx, |a, _| {
         if let Some(ChatMsg::Thinking { fold, .. }) = a.messages.last_mut() {
-            *fold = crate::msg::FoldState::Collapsed;
+            *fold = crate::app::msg::FoldState::Collapsed;
         }
     });
     c.app.update(cx, |a, cx| {
-        a.on_agent_event(AgentEvent::Reasoning { text: "b".into(), scope: None }, cx);
+        a.on_agent_event(
+            AgentEvent::Reasoning {
+                text: "b".into(),
+                scope: None,
+            },
+            cx,
+        );
     });
-    c.app.read_with(cx, |a, _| {
-        match a.messages.last() {
-            Some(ChatMsg::Thinking { text, fold }) => {
-                assert_eq!(*fold, crate::msg::FoldState::Collapsed, "追加不应重置折叠状态");
-                assert_eq!(text, "ab", "追加文本丢失");
-            }
-            other => panic!("Thinking 块丢失: {other:?}"),
+    c.app.read_with(cx, |a, _| match a.messages.last() {
+        Some(ChatMsg::Thinking { text, fold }) => {
+            assert_eq!(
+                *fold,
+                crate::app::msg::FoldState::Collapsed,
+                "追加不应重置折叠状态"
+            );
+            assert_eq!(text, "ab", "追加文本丢失");
         }
+        other => panic!("Thinking 块丢失: {other:?}"),
     });
 }
 
@@ -632,9 +792,9 @@ async fn case18_fold_state_cycle(cx: &mut TestAppContext) {
     c.app.update(cx, |a, _| {
         a.messages.push(ChatMsg::Assistant {
             text: "答案".into(),
-            fold: crate::msg::FoldState::Expanded,
+            fold: crate::app::msg::FoldState::Expanded,
         });
-        use crate::msg::FoldState::*;
+        use crate::app::msg::FoldState::*;
         assert_eq!(Expanded.next(), Preview);
         assert_eq!(Preview.next(), Collapsed);
         assert_eq!(Collapsed.next(), Expanded);
@@ -650,17 +810,22 @@ async fn case18_fold_state_cycle(cx: &mut TestAppContext) {
 // ---------- 用例 19：长消息默认 Preview ----------
 #[gpui::test]
 async fn case19_long_reply_defaults_to_preview(cx: &mut TestAppContext) {
-    let long_reply = (0..40).map(|i| format!("第 {i} 行")).collect::<Vec<_>>().join("\n");
+    let long_reply = (0..40)
+        .map(|i| format!("第 {i} 行"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut c = setup(cx, vec![turn(&long_reply)]);
     c.app.update(cx, |a, cx| a.send("go".into(), cx));
     assert!(wait(cx, &mut c, |a| !a.running, 5_000), "回合未完成");
-    c.app.read_with(cx, |a, _| {
-        match a.messages.last() {
-            Some(ChatMsg::Assistant { fold, .. }) => {
-                assert_eq!(*fold, crate::msg::FoldState::Preview, ">30 行默认 Preview");
-            }
-            other => panic!("无 Assistant: {other:?}"),
+    c.app.read_with(cx, |a, _| match a.messages.last() {
+        Some(ChatMsg::Assistant { fold, .. }) => {
+            assert_eq!(
+                *fold,
+                crate::app::msg::FoldState::Preview,
+                ">30 行默认 Preview"
+            );
         }
+        other => panic!("无 Assistant: {other:?}"),
     });
 }
 
@@ -672,17 +837,19 @@ async fn case20_streaming_append_keeps_user_fold(cx: &mut TestAppContext) {
         a.on_agent_event(AgentEvent::TextDelta("第一段".into()), cx);
         // 用户在流式期间切到 Preview
         if let Some(ChatMsg::Assistant { fold, .. }) = a.messages.last_mut() {
-            *fold = crate::msg::FoldState::Preview;
+            *fold = crate::app::msg::FoldState::Preview;
         }
         a.on_agent_event(AgentEvent::TextDelta(" 第二段".into()), cx);
     });
-    c.app.read_with(cx, |a, _| {
-        match a.messages.last() {
-            Some(ChatMsg::Assistant { text, fold }) => {
-                assert_eq!(*fold, crate::msg::FoldState::Preview, "流式追加不应重置折叠态");
-                assert_eq!(text, "第一段 第二段");
-            }
-            other => panic!("无 Assistant: {other:?}"),
+    c.app.read_with(cx, |a, _| match a.messages.last() {
+        Some(ChatMsg::Assistant { text, fold }) => {
+            assert_eq!(
+                *fold,
+                crate::app::msg::FoldState::Preview,
+                "流式追加不应重置折叠态"
+            );
+            assert_eq!(text, "第一段 第二段");
         }
+        other => panic!("无 Assistant: {other:?}"),
     });
 }

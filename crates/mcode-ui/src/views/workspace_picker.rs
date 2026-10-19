@@ -7,14 +7,17 @@
 //! 选定后：cwd → 记录 recent → 重扫 file_tree（respect show_hidden）→ rebuild_harness → 刷侧栏 → 进 Chat。
 //! 首次无 recents 时以 ~/.mcode/projects/*/sessions/*.meta.json 的 cwd 字段做种子。
 
-use gpui::{div, prelude::*, px, rgb, AnyElement, InteractiveElement, SharedString, StatefulInteractiveElement};
+use gpui::{
+    AnyElement, InteractiveElement, SharedString, StatefulInteractiveElement, div, prelude::*, px,
+    rgb,
+};
 use mcode_core::config::DesktopConfig;
 use std::path::PathBuf;
 
+use crate::app::msg::trunc;
 use crate::app::{App, View};
-use crate::file_explorer::scan_file_tree;
-use crate::msg::trunc;
-use crate::theme::*;
+use crate::views::file_explorer::scan_file_tree;
+use crate::views::theme::*;
 
 /// 读取最近工作区（desktop.json 为空时用历史会话目录做种子）
 pub(crate) fn load_recents() -> Vec<String> {
@@ -24,7 +27,9 @@ pub(crate) fn load_recents() -> Vec<String> {
     }
     let mut out: Vec<String> = vec![];
     let projects = mcode_core::util::mcode_dir().join("projects");
-    let Ok(dirs) = std::fs::read_dir(&projects) else { return out };
+    let Ok(dirs) = std::fs::read_dir(&projects) else {
+        return out;
+    };
     for d in dirs.flatten() {
         let sess = d.path().join("sessions");
         if let Ok(files) = std::fs::read_dir(&sess) {
@@ -34,7 +39,9 @@ pub(crate) fn load_recents() -> Vec<String> {
                 if !is_meta {
                     continue;
                 }
-                if let Ok(m) = serde_json::from_slice::<mcode_core::sessions::SessionMeta>(&std::fs::read(&p).unwrap_or_default()) {
+                if let Ok(m) = serde_json::from_slice::<mcode_core::sessions::SessionMeta>(
+                    &std::fs::read(&p).unwrap_or_default(),
+                ) {
                     if !out.contains(&m.cwd) {
                         out.push(m.cwd);
                     }
@@ -79,7 +86,10 @@ impl App {
         self.rebuild_harness(cx);
         self.refresh_sessions();
         self.view = View::Chat;
-        self.push_notice(format!("📂 工作区：{}", trunc(&self.cwd.to_string_lossy(), 60)), false);
+        self.push_notice(
+            format!("📂 工作区：{}", trunc(&self.cwd.to_string_lossy(), 60)),
+            false,
+        );
         cx.notify();
     }
 

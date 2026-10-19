@@ -6,28 +6,15 @@
 
 mod app;
 #[cfg(test)]
-mod fs_menu_tests;
-#[cfg(test)]
-mod real_event_tests;
-#[cfg(test)]
-mod interaction_tests;
-mod markdown_view;
-mod msg;
-mod chat_view;
-mod context_menu;
-mod file_explorer;
-mod runtime;
-mod session_ops;
-mod sidebar_view;
-mod theme;
-mod text_input;
+mod tests;
 mod views;
-mod workspace_picker;
+
+use views::file_explorer;
 
 use app::App;
 use gpui::{
-    actions, prelude::*, px, size, Application, Bounds, KeyBinding, TitlebarOptions,
-    WindowBounds, WindowOptions,
+    Application, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions,
+    prelude::*, px, size,
 };
 
 actions!(desktop, [Quit]);
@@ -39,7 +26,8 @@ fn main() {
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
             let root = spawn_main_window(cx);
-            root.update(cx, |app, window, cx| focus_composer(app, window, cx)).ok();
+            root.update(cx, |app, window, cx| focus_composer(app, window, cx))
+                .ok();
         }
         cx.activate(true);
     });
@@ -73,7 +61,11 @@ fn main() {
             KeyBinding::new("cmd-c", file_explorer::FsCopy, Some("FileExplorer")),
             KeyBinding::new("cmd-x", file_explorer::FsCut, Some("FileExplorer")),
             KeyBinding::new("cmd-v", file_explorer::FsPaste, Some("FileExplorer")),
-            KeyBinding::new("cmd-backspace", file_explorer::FsDelete, Some("FileExplorer")),
+            KeyBinding::new(
+                "cmd-backspace",
+                file_explorer::FsDelete,
+                Some("FileExplorer"),
+            ),
             KeyBinding::new("up", file_explorer::FsSelUp, Some("FileExplorer")),
             KeyBinding::new("down", file_explorer::FsSelDown, Some("FileExplorer")),
             KeyBinding::new("right", file_explorer::FsToggleDir, Some("FileExplorer")),
@@ -85,13 +77,14 @@ fn main() {
         // 全局句柄必须先初始化——spawn_main_window 会读写它（曾因缺失导致启动即崩）
         cx.set_global(MainWindowHandle::default());
         let root = spawn_main_window(cx);
-        root.update(cx, |app, window, cx| focus_composer(app, window, cx)).ok();
+        root.update(cx, |app, window, cx| focus_composer(app, window, cx))
+            .ok();
         cx.activate(true);
     });
 }
 
 /// ti 模块别名（KeyBinding 列表内引用 text_input 的动作类型）
-use text_input as ti;
+use views::text_input as ti;
 
 /// 主窗口句柄全局（Dock reopen 重建用）
 #[derive(Default)]
@@ -109,8 +102,13 @@ fn spawn_main_window(cx: &mut gpui::App) -> gpui::WindowHandle<App> {
         }),
         ..Default::default()
     };
-    let root = cx.open_window(options, |_, cx| cx.new(|cx| App::new(cx))).unwrap();
-    cx.global::<MainWindowHandle>().0.borrow_mut().replace(root.clone());
+    let root = cx
+        .open_window(options, |_, cx| cx.new(|cx| App::new(cx)))
+        .unwrap();
+    cx.global::<MainWindowHandle>()
+        .0
+        .borrow_mut()
+        .replace(root.clone());
     root
 }
 
