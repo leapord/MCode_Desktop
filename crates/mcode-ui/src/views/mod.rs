@@ -8,7 +8,9 @@
 
 pub mod chat_view;
 pub mod context_menu;
+pub mod dialogs;
 pub mod file_explorer;
+pub mod i18n;
 pub mod markdown_view;
 pub mod sidebar_view;
 pub mod text_input;
@@ -31,6 +33,28 @@ const MODES: [Mode; 4] = [Mode::Passon, Mode::Manual, Mode::Auto, Mode::Plan];
 
 fn mode_hint(m: Mode) -> &'static str {
     m.hint()
+}
+
+/// 小号操作按钮（列表行的 编辑/删除 等）
+fn small_btn(
+    label: &str,
+    id: String,
+    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(id))
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(BORDER)
+        .bg(BG_PANEL)
+        .text_size(px(11.))
+        .text_color(TEXT_2)
+        .cursor_pointer()
+        .hover(|s| s.bg(BG_HOVER))
+        .on_click(on_click)
+        .child(label.to_string())
 }
 
 // ---------- Onboarding ----------
@@ -98,7 +122,10 @@ pub fn render_onboarding(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
         .into_any_element()
 }
 
-fn field(label: &str, input: gpui::Entity<crate::views::text_input::TextInput>) -> gpui::Div {
+pub(crate) fn field(
+    label: &str,
+    input: gpui::Entity<crate::views::text_input::TextInput>,
+) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -123,11 +150,11 @@ fn field(label: &str, input: gpui::Entity<crate::views::text_input::TextInput>) 
 // ---------- Settings ----------
 
 pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement {
-    let provider = app.cfg.active_provider().cloned();
     let desktop = mcode_core::config::DesktopConfig::load();
+    let loc = i18n::s(app.cfg.language);
     let mut root = page_scaffold(
-        "⚙ 设置中心",
-        "~/.mcode/config.json · 唯一事实源（CLI 双端互通）",
+        loc.settings_title,
+        loc.settings_sub,
         cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
             this.view = View::Chat;
             cx.notify();
@@ -138,42 +165,114 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
     .gap_5()
     .p_6();
 
-    // 供应商卡片 + 模型列表（点击切换 → save + rebuild harness）
+    // 供应商列表：点击行激活；行侧 编辑/删除；头部新增（i18n 随语言切换）
+    let loc = i18n::s(app.cfg.language);
+    let providers: Vec<mcode_core::config::Provider> = app.cfg.providers.clone();
     root = root.child(
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_size(px(15.)).child("🔌 模型供应商"))
-            .children(provider.map(|p| {
+            .child(
                 div()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(ACCENT)
-                    .bg(BG_PANEL)
-                    .p_4()
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_size(px(15.)).child(loc.providers_section))
+                    .child(div().flex_1())
+                    .child(small_btn(
+                        loc.add_provider,
+                        "btn-provider-add".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_provider_form(None, cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .children(providers.iter().map(|p| {
+                let active = app.cfg.active_provider.as_deref() == Some(p.name.as_str());
+                let pname = p.name.clone();
+                let p_edit = p.clone();
+                let p_del = p.name.clone();
+                let meta: SharedString = format!("{} · key: ${}", p.base_url, p.api_key_env).into();
+                let models: SharedString = format!("models: {}", p.models.join(", ")).into();
+                div()
+                    .flex()
+                    .items_start()
                     .gap_2()
                     .child(
                         div()
+                            .id(SharedString::from(format!("prov-{}", p.name)))
+                            .flex_1()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(if active { ACCENT } else { BORDER })
+                            .bg(BG_PANEL)
+                            .p_3()
                             .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_size(px(13.5)).child(p.name.clone()))
-                            .child(badge("当前激活", ACCENT)),
+                            .flex_col()
+                            .gap_1()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(BG_HOVER))
+                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                if this.cfg.set_active_provider(&pname).is_ok() {
+                                    this.save_cfg_and_rebuild(cx);
+                                    let m = this.cfg.active_model().unwrap_or_default();
+                                    this.push_notice(format!("✓ {pname} → {m}"), false);
+                                }
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_size(px(13.)).child(p.name.clone()))
+                                    .when(active, |d| d.child(badge(loc.active_badge, ACCENT))),
+                            )
+                            .child(
+                                div()
+                                    .font_family("Menlo")
+                                    .text_size(px(11.))
+                                    .text_color(TEXT_3)
+                                    .child(meta),
+                            )
+                            .child(
+                                div()
+                                    .font_family("Menlo")
+                                    .text_size(px(11.))
+                                    .text_color(TEXT_3)
+                                    .child(models),
+                            ),
                     )
-                    .child(
-                        div()
-                            .font_family("Menlo")
-                            .text_size(px(11.5))
-                            .text_color(TEXT_3)
-                            .child(SharedString::from(format!(
-                                "{} · key: ${}",
-                                p.base_url, p.api_key_env
-                            ))),
-                    )
-            }))
+                    .child(small_btn(
+                        loc.edit,
+                        format!("prov-edit-{}", p.name),
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_provider_form(Some(&p_edit), cx);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(small_btn(
+                        loc.delete,
+                        format!("prov-del-{}", p.name),
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_confirm_remove(crate::app::RemoveAction::Provider(
+                                p_del.clone(),
+                            ));
+                            cx.notify();
+                        }),
+                    ))
+            })),
+    );
+
+    // 当前供应商的模型列表（点击切换 → save + rebuild harness）
+    root = root.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_size(px(15.)).child(loc.models_section))
             .children(app.cfg.active_provider().map(|p| {
                 div()
                     .flex()
@@ -198,12 +297,12 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                                 if this.set_model(&model) {
                                     this.save_cfg_and_rebuild(cx);
-                                    this.push_notice(format!("✓ 模型 → {model}"), false);
+                                    this.push_notice(format!("✓ → {model}"), false);
                                 }
                                 cx.notify();
                             }))
                             .child(if active {
-                                format!("▸ {m} · 使用中")
+                                format!("▸ {m} · {}", loc.using_now)
                             } else {
                                 m.clone()
                             })
@@ -218,7 +317,7 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(div().text_size(px(15.)).child("🌐 语言环境（/language）"))
+                .child(div().text_size(px(15.)).child(loc.language_section))
                 .child(
                     div()
                         .id("lang-cycle")
@@ -245,11 +344,7 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(
-                    div()
-                        .text_size(px(15.))
-                        .child("🛡 默认权限模式（会话内 shift+tab 临时切换）"),
-                )
+                .child(div().text_size(px(15.)).child(loc.default_mode_section))
                 .child(div().flex().gap_2().children(MODES.map(|m| {
                     let sel = app.cfg.default_mode == m;
                     div()
@@ -284,7 +379,7 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(div().text_size(px(15.)).child("🧘 PUA 收敛纪律"))
+                .child(div().text_size(px(15.)).child(loc.pua_section))
                 .child(
                     div()
                         .id("pua-toggle")
@@ -307,9 +402,9 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                             cx.notify();
                         }))
                         .child(if app.cfg.pua_always_on {
-                            "已开启（/pua:off 关闭）"
+                            loc.pua_on
                         } else {
-                            "已关闭（/pua:on 开启）"
+                            loc.pua_off
                         }),
                 ),
         );
@@ -320,16 +415,12 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                div()
-                    .text_size(px(15.))
-                    .child("🔓 权限规则（~/.mcode/desktop.json）"),
-            )
+            .child(div().text_size(px(15.)).child(loc.permission_rules))
             .child(if desktop.permission_rules.is_empty() {
                 div()
                     .text_size(px(12.))
                     .text_color(TEXT_3)
-                    .child("暂无规则（allow/deny 子串匹配，编辑 desktop.json 后重启生效）")
+                    .child(loc.no_rules)
             } else {
                 div()
                     .flex()
@@ -375,7 +466,7 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
                     this.view = View::Onboarding;
                     cx.notify();
                 }))
-                .child("⟲ 重新运行引导"),
+                .child(loc.rerun_onboarding),
         ),
     );
 
@@ -385,10 +476,10 @@ pub fn render_settings(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement
 // ---------- Extensions ----------
 
 pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement {
-    let desktop = mcode_core::config::DesktopConfig::load();
+    let loc = i18n::s(app.cfg.language);
     let mut root = page_scaffold(
-        "🧩 扩展生态",
-        "MCP / hooks · 配置来源 ~/.mcode/desktop.json",
+        loc.extensions_title,
+        loc.extensions_sub,
         cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
             this.view = View::Chat;
             cx.notify();
@@ -399,23 +490,207 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
     .gap_5()
     .p_6();
 
-    // MCP servers：名称/命令/工具数（harness.mcp_report）+ 失败原因
+    // ---------- 技能（创建 / 本地目录安装 / 移除） ----------
+    let skills: Vec<mcode_core::skills::Skill> = app.ext_skills.clone();
+    let skill_rows: Vec<gpui::Div> = skills
+        .iter()
+        .map(|s| {
+            let name = s.entry.name.clone();
+            let source = s.entry.source.clone();
+            let builtin = source != "user" && source != "project";
+            let src_tag = if builtin {
+                (loc.builtin_tag, TEXT_3)
+            } else {
+                (loc.removable_tag, GREEN)
+            };
+            let del_name = name.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1p5()
+                .rounded_sm()
+                .bg(BG_PANEL)
+                .text_size(px(12.))
+                .child(div().text_color(TEXT_1).child(name))
+                .child(
+                    div()
+                        .text_color(src_tag.1)
+                        .text_size(px(10.5))
+                        .child(format!("[{source}]")),
+                )
+                .child(
+                    div()
+                        .text_color(TEXT_3)
+                        .text_size(px(10.5))
+                        .child(src_tag.0),
+                )
+                .when(!builtin, |d| {
+                    d.child(small_btn(
+                        loc.delete,
+                        format!("skill-del-{}", s.entry.name),
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_confirm_remove(crate::app::RemoveAction::Skill(
+                                del_name.clone(),
+                            ));
+                            cx.notify();
+                        }),
+                    ))
+                })
+        })
+        .collect();
+    root = root.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_size(px(15.)).child(loc.skills_section))
+                    .child(div().flex_1())
+                    .child(small_btn(
+                        loc.create_skill,
+                        "btn-skill-create".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_skill_create(cx);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(small_btn(
+                        loc.install_skill,
+                        "btn-skill-install".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_install(crate::app::InstallKind::Skill, cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .when(skills.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(TEXT_3)
+                        .child(loc.no_skills),
+                )
+            })
+            .children(skill_rows),
+    );
+
+    // ---------- Subagents（创建 / 本地 .md 安装 / 移除） ----------
+    let agents: Vec<mcode_core::agent::subagent::AgentDefinition> = app.ext_agents.clone();
+    let user_agents_dir = mcode_core::util::mcode_dir().join("agents");
+    let agent_rows: Vec<gpui::Div> = agents
+        .iter()
+        .map(|a| {
+            let name = a.name.clone();
+            let desc: SharedString = crate::app::msg::trunc(&a.description, 52).into();
+            let user_file = user_agents_dir.join(format!("{}.md", a.name));
+            let is_user = user_file.is_file();
+            let del_name = name.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1p5()
+                .rounded_sm()
+                .bg(BG_PANEL)
+                .text_size(px(12.))
+                .child(div().text_color(TEXT_1).child(name))
+                .child(div().text_color(TEXT_3).text_size(px(11.)).child(desc))
+                .child(
+                    div()
+                        .text_color(if is_user { GREEN } else { TEXT_3 })
+                        .text_size(px(10.5))
+                        .child(if is_user {
+                            loc.removable_tag
+                        } else {
+                            loc.builtin_tag
+                        }),
+                )
+                .when(is_user, |d| {
+                    d.child(small_btn(
+                        loc.delete,
+                        format!("agent-del-{}", a.name),
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_confirm_remove(crate::app::RemoveAction::Agent(
+                                del_name.clone(),
+                            ));
+                            cx.notify();
+                        }),
+                    ))
+                })
+        })
+        .collect();
+    root = root.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_size(px(15.)).child(loc.agents_section))
+                    .child(div().flex_1())
+                    .child(small_btn(
+                        loc.create_agent,
+                        "btn-agent-create".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_agent_create(cx);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(small_btn(
+                        loc.install_agent,
+                        "btn-agent-install".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_install(crate::app::InstallKind::Agent, cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .when(agents.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(TEXT_3)
+                        .child(loc.no_agents),
+                )
+            })
+            .children(agent_rows),
+    );
+
+    // ---------- MCP Servers（新增 / 启停 / 移除，写 desktop.json） ----------
+    let desktop = mcode_core::config::DesktopConfig::load();
     let mut mcp_rows: Vec<gpui::Div> = vec![];
     for cfg in &desktop.mcp_servers {
         let report = app
             .harness
             .as_ref()
             .and_then(|h| h.mcp_report.iter().find(|(n, _)| n == &cfg.name));
-        let (dot, state): (&'static str, SharedString) = match report {
-            Some((_, Ok(n))) => ("🟢", format!("connected · 已注入 {n} 个工具").into()),
-            Some((_, Err(e))) => (
-                "🔴",
-                format!("连接失败：{}", trunc(&format!("{e:#}"), 60)).into(),
-            ),
-            None => ("⚪", "已停用".into()),
+        let (dot, state): (&'static str, SharedString) = if !cfg.enabled {
+            ("⚪", loc.disable.to_string().into())
+        } else {
+            match report {
+                Some((_, Ok(n))) => ("🟢", format!("connected · {n} tools").into()),
+                Some((_, Err(e))) => (
+                    "🔴",
+                    format!("{}", crate::app::msg::trunc(&format!("{e:#}"), 60)).into(),
+                ),
+                None => ("⚪", "…".into()),
+            }
         };
         let name: SharedString = cfg.name.clone().into();
         let meta: SharedString = format!("{} · {}", cfg.command, cfg.args.join(" ")).into();
+        let tog_name = cfg.name.clone();
+        let now_enabled = cfg.enabled;
+        let del_name = cfg.name.clone();
         mcp_rows.push(
             div()
                 .flex()
@@ -442,7 +717,6 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                 )
                 .child(
                     div()
-                        .ml_auto()
                         .text_size(px(11.))
                         .text_color(if matches!(report, Some((_, Ok(_)))) {
                             GREEN
@@ -450,7 +724,28 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                             TEXT_3
                         })
                         .child(state),
-                ),
+                )
+                .child(small_btn(
+                    if now_enabled { loc.disable } else { loc.enable },
+                    format!("mcp-tog-{}", cfg.name),
+                    cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        let mut d = mcode_core::config::DesktopConfig::load();
+                        if d.set_mcp_enabled(&tog_name, !now_enabled).is_ok() {
+                            d.save().ok();
+                            this.rebuild_harness(cx);
+                            this.push_notice(format!("✓ MCP `{tog_name}` 已切换"), false);
+                        }
+                        cx.notify();
+                    }),
+                ))
+                .child(small_btn(
+                    loc.delete,
+                    format!("mcp-del-{}", cfg.name),
+                    cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        this.open_confirm_remove(crate::app::RemoveAction::Mcp(del_name.clone()));
+                        cx.notify();
+                    }),
+                )),
         );
     }
     root = root.child(
@@ -458,30 +753,45 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_size(px(15.)).child("🔗 MCP Servers（/mcp）"))
-            .children(mcp_rows)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_size(px(15.)).child(loc.mcp_section))
+                    .child(div().flex_1())
+                    .child(small_btn(
+                        loc.add_mcp,
+                        "btn-mcp-add".into(),
+                        cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_mcp_form(cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
             .when(desktop.mcp_servers.is_empty(), |d| {
                 d.child(
                     div()
                         .text_size(px(12.))
                         .text_color(TEXT_3)
-                        .child("未配置 MCP server"),
+                        .child(loc.no_mcp),
                 )
-            }),
+            })
+            .children(mcp_rows),
     );
 
-    // hooks：event / matcher / command
+    // ---------- Hooks（只读展示） ----------
     root = root.child(
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_size(px(15.)).child("🪝 Hooks（/hooks）"))
+            .child(div().text_size(px(15.)).child(loc.hooks_section))
             .child(if desktop.hooks.is_empty() {
                 div()
                     .text_size(px(12.))
                     .text_color(TEXT_3)
-                    .child("未配置 hooks")
+                    .child(loc.no_hooks)
             } else {
                 div()
                     .flex()
@@ -490,7 +800,7 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                     .children(desktop.hooks.iter().map(|h| {
                         let event: SharedString = format!("{:?}", h.event).into();
                         let matcher: SharedString = h.matcher.clone().into();
-                        let command: SharedString = trunc(&h.command, 60).into();
+                        let command: SharedString = crate::app::msg::trunc(&h.command, 60).into();
                         div()
                             .flex()
                             .items_center()
@@ -505,10 +815,7 @@ pub fn render_extensions(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                             .child(div().text_color(TEXT_3).child(matcher))
                             .child(div().text_color(TEXT_2).child(command))
                     }))
-            })
-            .child(div().text_size(px(11.5)).text_color(TEXT_3).child(
-                "提示：编辑 ~/.mcode/desktop.json 后重启生效。MCP 工具与内置工具同一权限门控。",
-            )),
+            }),
     );
 
     root.into_any_element()

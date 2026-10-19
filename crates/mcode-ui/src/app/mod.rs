@@ -6,6 +6,7 @@
 //! /goal 外层循环（check_goal_complete 裁判）、会话持久化（SessionStore）、指令系统。
 //! 渲染分发在 views.rs（四视图）与 chat_view.rs（chat 布局），指令与会话操作在 session_ops.rs。
 
+pub mod manage;
 pub mod msg;
 pub mod runtime;
 pub mod session_ops;
@@ -60,6 +61,58 @@ pub enum View {
     Onboarding,
     /// 启动工作区选择器（IDEA 式首屏；顶栏 cwd 徽章点击可重新进入）
     WorkspacePicker,
+}
+
+/// 本地路径安装对象
+#[derive(Clone, Copy, PartialEq)]
+pub enum InstallKind {
+    Skill,
+    Agent,
+}
+
+/// 删除二次确认的目标
+#[derive(Clone)]
+pub enum RemoveAction {
+    Provider(String),
+    Skill(String),
+    Agent(String),
+    Mcp(String),
+}
+
+/// 设置/扩展页表单对话框（字段为 Entity<TextInput>；渲染见 views/dialogs.rs）
+pub enum Dialog {
+    /// 供应商新增/编辑（editing = Some(原名) 为编辑模式）
+    ProviderForm {
+        editing: Option<String>,
+        name: Entity<TextInput>,
+        url: Entity<TextInput>,
+        key: Entity<TextInput>,
+        models: Entity<TextInput>,
+        mm: Entity<TextInput>,
+    },
+    /// agent 创建（正文 = system prompt）
+    AgentCreate {
+        name: Entity<TextInput>,
+        desc: Entity<TextInput>,
+        prompt: Entity<TextInput>,
+    },
+    /// 技能创建
+    SkillCreate {
+        name: Entity<TextInput>,
+        desc: Entity<TextInput>,
+    },
+    /// 本地路径安装（skill 目录 / agent .md 文件）
+    Install {
+        kind: InstallKind,
+        path: Entity<TextInput>,
+    },
+    /// MCP server 新增
+    McpForm {
+        name: Entity<TextInput>,
+        command: Entity<TextInput>,
+    },
+    /// 删除二次确认
+    ConfirmRemove { action: RemoveAction },
 }
 
 /// App — UI 侧状态 + 内核接线。回合一启动就持 hist 锁推进，UI 线程只 try_lock 只读。
@@ -124,6 +177,11 @@ pub struct App {
     pub(crate) context_menu: Option<crate::views::context_menu::CtxMenu>,
     /// 行内重命名弹窗（预填当前名 + 确认/取消）
     pub(crate) rename_state: Option<crate::views::context_menu::RenameState>,
+    /// 管理/表单对话框（设置与扩展页增删改；None = 关闭）
+    pub dialog: Option<Dialog>,
+    /// 扩展页缓存：技能与 agent 清单（进入视图或 CRUD 后刷新）
+    pub ext_skills: Vec<mcode_core::skills::Skill>,
+    pub ext_agents: Vec<mcode_core::agent::subagent::AgentDefinition>,
 }
 /// 回合任务获取 hist 锁的等待上限（测试用 1s 加速锁超时用例）
 #[cfg(test)]
@@ -207,6 +265,9 @@ impl App {
             explorer_focus: cx.focus_handle(),
             context_menu: None,
             rename_state: None,
+            dialog: None,
+            ext_skills: vec![],
+            ext_agents: vec![],
         };
         // 输入框事件 → 发送 / 补全状态机同步（对齐 prototype 的 useCompletion 链路）
         cx.subscribe(&me.input, |this, _, event, cx| match event {

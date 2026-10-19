@@ -21,14 +21,19 @@ use crate::views::theme::*;
 
 /// 渲染分发：Onboarding / Settings / Extensions / Sessions / Chat
 pub(crate) fn render_app(app: &mut App, window: &mut Window, cx: &mut Context<App>) -> AnyElement {
-    match app.view {
+    let base = match app.view {
         View::Onboarding => crate::views::render_onboarding(app, cx),
         View::Settings => crate::views::render_settings(app, cx),
         View::Extensions => crate::views::render_extensions(app, cx),
         View::Sessions => crate::views::render_sessions(app, cx),
         View::Chat => render_chat(app, window, cx),
         View::WorkspacePicker => crate::views::workspace_picker::render_workspace_picker(app, cx),
+    };
+    // 管理对话框浮层（设置/扩展页增删改表单）叠加在页面之上
+    if let Some(dlg) = crate::views::dialogs::render_dialog(app, cx) {
+        return div().size_full().child(base).child(dlg).into_any_element();
     }
+    base
 }
 
 fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> AnyElement {
@@ -210,6 +215,10 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
             cx.notify();
         }))
         .on_action(cx.listener(|this, _: &crate::app::ClosePalette, _, cx| {
+            if this.dialog.take().is_some() {
+                cx.notify();
+                return;
+            }
             this.interrupt(cx);
         }))
         .on_action(cx.listener(|this, _: &crate::app::NewChat, _, cx| {
@@ -222,6 +231,7 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
         }))
         .on_action(cx.listener(|this, _: &crate::app::OpenExtensions, _, cx| {
             this.view = View::Extensions;
+            this.refresh_extensions();
             cx.notify();
         }))
         .on_action(cx.listener(|this, _: &crate::app::OpenSessions, _, cx| {
