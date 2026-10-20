@@ -6,5 +6,6 @@
 //! + 真实事件路径（real_event_tests）。`#[gpui::test]` 驱动，CI 无头运行。
 
 pub mod fs_menu_tests;
+pub mod ime_tests;
 pub mod interaction_tests;
 pub mod real_event_tests;

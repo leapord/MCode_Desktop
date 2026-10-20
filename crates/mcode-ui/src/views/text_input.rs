@@ -94,14 +94,27 @@ impl TextInput {
         self.move_to(self.content.len(), cx);
     }
 
-    fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+    /// IME 组词中（marked text 未上屏）。gpui 0.2 Windows 后端会把组词期按键
+    /// （VK_PROCESSKEY）还原成原始键派发进应用，退格若不拦截会删掉已上屏内容
+    /// 而不是让输入法纠正拼音；此时退格/删除/回车都应交给输入法。
+    fn is_composing(&self) -> bool {
+        self.marked_range.is_some()
+    }
+
+    pub(crate) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_composing() {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
 
-    fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_composing() {
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
@@ -146,7 +159,10 @@ impl TextInput {
         cx.notify();
     }
 
-    fn submit(&mut self, _: &Submit, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn submit(&mut self, _: &Submit, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_composing() {
+            return; // Enter 属于输入法（确认拼音上屏），不能当发送
+        }
         let text = self.content.to_string();
         if !text.trim().is_empty() {
             cx.emit(InputEvent::Submit(text));
