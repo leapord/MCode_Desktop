@@ -65,6 +65,8 @@ impl App {
     /// 防垃圾条目：当前会话没有任何完成回合（turns == 0）时复用，不重复建。
     pub fn new_chat(&mut self) {
         self.messages.clear();
+        self.chat_follow = true;
+        self.chat_last_down_y = None;
         self.queue.clear();
         if let Ok(mut h) = self.hist.try_lock() {
             h.clear();
@@ -197,6 +199,8 @@ impl App {
             }
             "/clear" => {
                 self.messages.clear();
+                self.chat_follow = true;
+                self.chat_last_down_y = None;
                 if let Ok(mut h) = self.hist.try_lock() {
                     h.clear();
                 }
@@ -424,6 +428,8 @@ impl App {
             }
         }
         self.messages = chat;
+        self.chat_follow = true;
+        self.chat_last_down_y = None;
         if let Ok(mut h) = self.hist.try_lock() {
             *h = hist;
         }

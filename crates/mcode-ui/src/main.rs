@@ -80,7 +80,11 @@ fn main() {
             KeyBinding::new("up", file_explorer::FsSelUp, Some("FileExplorer")),
             KeyBinding::new("down", file_explorer::FsSelDown, Some("FileExplorer")),
             KeyBinding::new("right", file_explorer::FsToggleDir, Some("FileExplorer")),
-            KeyBinding::new("secondary-n", file_explorer::FsNewFile, Some("FileExplorer")),
+            KeyBinding::new(
+                "secondary-n",
+                file_explorer::FsNewFile,
+                Some("FileExplorer"),
+            ),
             KeyBinding::new("secondary-q", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());

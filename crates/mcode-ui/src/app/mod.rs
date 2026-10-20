@@ -156,6 +156,12 @@ pub struct App {
     pub thinking_default_expanded: bool,
     /// 当前流式思考块的滚动跟随句柄（scroll_to_bottom 每次追加时置位）
     pub(crate) thinking_scroll: gpui::ScrollHandle,
+    /// 消息区滚动句柄（跟随模式每帧钉底）
+    pub(crate) chat_scroll: gpui::ScrollHandle,
+    /// 消息区滚动跟随：上翻即暂停，贴底（连续下滚 offset 不再变化）或点按钮恢复
+    pub(crate) chat_follow: bool,
+    /// 上一次下滚事件时的 offset.y（贴底探测：连续两次下滚位置不变 = 已贴底）
+    pub(crate) chat_last_down_y: Option<gpui::Pixels>,
     // -- 工作区文件浏览器 / 布局 --
     /// 左侧功能区折叠（40px 图标条）
     pub(crate) sidebar_collapsed: bool,
@@ -254,6 +260,9 @@ impl App {
             ctx_tokens: 0,
             thinking_default_expanded: true,
             thinking_scroll: gpui::ScrollHandle::new(),
+            chat_scroll: gpui::ScrollHandle::new(),
+            chat_follow: true,
+            chat_last_down_y: None,
             view: if test_mode {
                 View::Chat
             } else if needs_onboarding {

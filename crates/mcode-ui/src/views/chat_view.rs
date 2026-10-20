@@ -366,15 +366,72 @@ fn render_chat(app: &mut App, _window: &mut Window, cx: &mut Context<App>) -> An
                         .flex()
                         .flex_col()
                         .child(
-                            // 消息滚动区
+                            // 消息滚动区（外层 relative 承载"回到底部"浮钮；
+                            // 跟随模式每帧钉底，新内容到达即贴底）
                             div()
-                                .id("messages")
+                                .relative()
                                 .flex_1()
                                 .min_h_0()
-                                .overflow_y_scroll()
-                                .px_5()
-                                .py_3()
-                                .children(message_list),
+                                .flex()
+                                .flex_col()
+                                .when(app.chat_follow, |d| {
+                                    app.chat_scroll.scroll_to_bottom();
+                                    d
+                                })
+                                .child(
+                                    div()
+                                        .id("messages")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&app.chat_scroll)
+                                        .on_scroll_wheel(cx.listener(
+                                            |this, event: &gpui::ScrollWheelEvent, _, _| {
+                                                let dy = event.delta.pixel_delta(px(16.)).y;
+                                                if dy > gpui::Pixels::ZERO {
+                                                    // 上翻：暂停跟随
+                                                    this.chat_follow = false;
+                                                    this.chat_last_down_y = None;
+                                                } else if dy < gpui::Pixels::ZERO {
+                                                    // 贴底探测：连续两次下滚 offset 不再变化
+                                                    // = 已到底（或内容不足一屏），恢复跟随
+                                                    let y = this.chat_scroll.offset().y;
+                                                    if this.chat_last_down_y == Some(y) {
+                                                        this.chat_follow = true;
+                                                    }
+                                                    this.chat_last_down_y = Some(y);
+                                                }
+                                            },
+                                        ))
+                                        .px_5()
+                                        .py_3()
+                                        .children(message_list),
+                                )
+                                .when(!app.chat_follow, |d| {
+                                    d.child(
+                                        div()
+                                            .id("btn-chat-bottom")
+                                            .absolute()
+                                            .bottom_3()
+                                            .right_6()
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_full()
+                                            .border_1()
+                                            .border_color(BORDER_STRONG)
+                                            .bg(BG_PANEL)
+                                            .text_color(TEXT_2)
+                                            .text_size(px(11.))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(
+                                                |this, _: &gpui::ClickEvent, _, cx| {
+                                                    this.chat_follow = true;
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child("↓ 回到底部"),
+                                    )
+                                }),
                         )
                         .child(queue_banner)
                         .child(
