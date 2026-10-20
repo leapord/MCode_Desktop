@@ -15,7 +15,7 @@ use gpui::{AppContext, Entity, TestAppContext};
 use mcode_core::agent::{
     AgentEvent, ApiMessage, Attachment, ModelBackend, StreamEvent, StreamTurn, ToolCall,
 };
-use mcode_core::config::{Config, Provider};
+use mcode_core::config::{Config, Protocol, Provider};
 use mcode_core::permission::{Decision, Mode, Verdict};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -153,6 +153,7 @@ pub(crate) fn test_config() -> Config {
             api_key_env: "sk-literal-test".into(),
             models: vec!["test-model".into()],
             multimodal_models: vec![],
+            protocol: Protocol::default(),
         }],
         default_mode: Mode::Passon,
         session_retention_days: 90,

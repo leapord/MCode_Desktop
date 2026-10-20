@@ -89,6 +89,7 @@ pub enum Dialog {
         key: Entity<TextInput>,
         models: Entity<TextInput>,
         mm: Entity<TextInput>,
+        protocol: mcode_core::config::Protocol,
     },
     /// agent 创建（正文 = system prompt）
     AgentCreate {
@@ -120,11 +121,12 @@ pub struct App {
     focus_handle: FocusHandle,
     /// Composer 输入框
     pub input: Entity<TextInput>,
-    /// Onboarding 表单输入（名称 / baseURL / apiKeyEnv / models 逗号分隔）
+    /// Onboarding 表单输入（名称 / baseURL / apiKeyEnv / models 逗号分隔 / API 协议）
     pub ob_name: Entity<TextInput>,
     pub ob_url: Entity<TextInput>,
     pub ob_key: Entity<TextInput>,
     pub ob_models: Entity<TextInput>,
+    pub ob_protocol: mcode_core::config::Protocol,
     pub(crate) rt: Arc<UiRuntime>,
     pub harness: Option<Arc<Harness>>,
     pub cfg: Config,
@@ -228,6 +230,7 @@ impl App {
             ob_url,
             ob_key,
             ob_models,
+            ob_protocol: mcode_core::config::Protocol::default(),
             ws_input,
             rt: Arc::new(UiRuntime::new().expect("tokio runtime 创建失败")),
             harness: None,

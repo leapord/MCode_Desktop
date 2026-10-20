@@ -473,6 +473,7 @@ impl App {
             api_key_env: key,
             models: models.clone(),
             multimodal_models: vec![],
+            protocol: self.ob_protocol,
         };
         self.cfg.providers = vec![provider];
         self.cfg.active_provider = Some(name);

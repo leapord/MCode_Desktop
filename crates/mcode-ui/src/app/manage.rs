@@ -53,6 +53,7 @@ impl App {
             key,
             models,
             mm,
+            protocol: editing.map(|p| p.protocol).unwrap_or_default(),
         });
     }
 }
@@ -110,6 +111,7 @@ impl App {
             key,
             models,
             mm,
+            protocol,
         }) = &self.dialog
         else {
             return;
@@ -129,6 +131,7 @@ impl App {
             api_key_env: key,
             models,
             multimodal_models: mm,
+            protocol: *protocol,
         };
         if let Some(old) = editing {
             let was_active = self.cfg.active_provider.as_deref() == Some(old.as_str());

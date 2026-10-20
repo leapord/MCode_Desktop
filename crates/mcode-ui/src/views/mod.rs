@@ -59,6 +59,37 @@ fn small_btn(
 
 // ---------- Onboarding ----------
 
+/// 协议选择 chip（选中高亮 ACCENT；on_click 由调用方以 cx.listener 包装并写状态）
+pub(crate) fn protocol_chip(
+    id: &'static str,
+    label: &str,
+    selected: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let (bg, fg, border) = if selected {
+        (ACCENT, rgb(0xffffff), ACCENT)
+    } else {
+        (BG_PANEL, TEXT_2, BORDER)
+    };
+    div()
+        .id(SharedString::from(id))
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(border)
+        .bg(bg)
+        .text_size(px(11.))
+        .text_color(fg)
+        .cursor_pointer()
+        .hover(|s| s.bg(ACCENT).text_color(rgb(0xffffff)))
+        .on_click(on_click)
+        .child(label.to_string())
+}
+
+/// 「API 协议」说明行文案（onboarding 与 Provider 表单共用）
+pub(crate) const PROTOCOL_HINT: &str = "API 协议（私有化部署 vLLM/SGLang 等通常选 chat）";
+
 pub fn render_onboarding(app: &mut App, cx: &mut gpui::Context<App>) -> AnyElement {
     div()
         .size_full()
@@ -96,9 +127,46 @@ pub fn render_onboarding(app: &mut App, cx: &mut gpui::Context<App>) -> AnyEleme
                         .child(field("可用模型（逗号分隔）", app.ob_models.clone()))
                         .child(
                             div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(TEXT_2)
+                                        .child(PROTOCOL_HINT),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .child(protocol_chip(
+                                            "ob-proto-responses",
+                                            "Responses",
+                                            app.ob_protocol == mcode_core::config::Protocol::Responses,
+                                            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                                this.ob_protocol =
+                                                    mcode_core::config::Protocol::Responses;
+                                                cx.notify();
+                                            }),
+                                        ))
+                                        .child(protocol_chip(
+                                            "ob-proto-chat",
+                                            "Chat Completions（vLLM/DeepSeek 私有化等）",
+                                            app.ob_protocol == mcode_core::config::Protocol::Chat,
+                                            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                                this.ob_protocol =
+                                                    mcode_core::config::Protocol::Chat;
+                                                cx.notify();
+                                            }),
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
                                 .text_size(px(11.5))
                                 .text_color(TEXT_3)
-                                .child("apiKey 只存环境变量名；带 multimodal 标记的模型才接收图片附件（可在 desktop.json 扩展配置）。"),
+                                .child("apiKey 只存环境变量名（或明文 key 兜底）；带 multimodal 标记的模型才接收图片附件（可在 desktop.json 扩展配置）。"),
                         )
                         .child(
                             div().flex().justify_end().child(

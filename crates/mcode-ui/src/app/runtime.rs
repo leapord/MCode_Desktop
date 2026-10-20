@@ -10,7 +10,6 @@ use mcode_core::agent::ModelBackend;
 use mcode_core::agent::context::load_project_doc;
 use mcode_core::agent::runner::{AgentDeps, ConfirmRequest, ConfirmSender};
 use mcode_core::agent::subagent::{TaskTool, all_agents};
-use mcode_core::api::ResponsesBackend;
 use mcode_core::hooks::HookEngine;
 use mcode_core::permission::PermissionManager;
 use mcode_core::tools::{EventSink, ToolRegistry};
@@ -104,7 +103,7 @@ async fn build_harness_async(
                 .ok_or_else(|| anyhow::anyhow!("未配置供应商"))?
                 .clone();
             let model = cfg.active_model().unwrap_or_default();
-            Arc::new(ResponsesBackend::new(provider, model)?)
+            mcode_core::api::build_backend(provider, model)?
         }
     };
 

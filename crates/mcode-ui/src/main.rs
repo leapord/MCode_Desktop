@@ -4,6 +4,14 @@
 
 //! MCode_Desktop — GPUI 桌面端入口
 
+// Windows：release 构建按 GUI 子系统链接。Rust 在 Windows 默认是 console 子系统，
+// 系统会在启动时给进程分配一个控制台窗口并随进程常驻（实测：桌面端启动后多一个
+// 黑色 cmd 窗口关不掉）。debug 构建保留控制台，便于看 eprintln/panic 输出。
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod app;
 #[cfg(test)]
 mod tests;
@@ -34,16 +42,19 @@ fn main() {
     app.run(|cx: &mut gpui::App| {
         cx.bind_keys([
             // TextInput 编辑动作
+            // 修饰键用 secondary（gpui 跨平台别名：macOS→cmd，Windows/Linux→ctrl）。
+            // 不能写 cmd-：gpui 0.2 的 Windows 后端把 platform 修饰键映射为 Win 键，
+            // cmd-v 在 Windows 上实际是 Win+V，Ctrl+V 永远不命中（实测引导页无法粘贴的根因）。
             KeyBinding::new("backspace", ti::Backspace, None),
             KeyBinding::new("delete", ti::Delete, None),
             KeyBinding::new("left", ti::Left, None),
             KeyBinding::new("right", ti::Right, None),
             KeyBinding::new("shift-left", ti::SelectLeft, None),
             KeyBinding::new("shift-right", ti::SelectRight, None),
-            KeyBinding::new("cmd-a", ti::SelectAll, None),
-            KeyBinding::new("cmd-v", ti::Paste, None),
-            KeyBinding::new("cmd-c", ti::Copy, None),
-            KeyBinding::new("cmd-x", ti::Cut, None),
+            KeyBinding::new("secondary-a", ti::SelectAll, None),
+            KeyBinding::new("secondary-v", ti::Paste, None),
+            KeyBinding::new("secondary-c", ti::Copy, None),
+            KeyBinding::new("secondary-x", ti::Cut, None),
             KeyBinding::new("home", ti::Home, None),
             KeyBinding::new("end", ti::End, None),
             KeyBinding::new("enter", ti::Submit, None),
@@ -53,24 +64,24 @@ fn main() {
             KeyBinding::new("down", app::PaletteDown, None),
             KeyBinding::new("tab", app::PaletteComplete, None),
             KeyBinding::new("escape", app::ClosePalette, None),
-            KeyBinding::new("cmd-n", app::NewChat, None),
-            KeyBinding::new("cmd-,", app::OpenSettings, None),
-            KeyBinding::new("cmd-e", app::OpenExtensions, None),
-            KeyBinding::new("cmd-j", app::OpenSessions, None),
+            KeyBinding::new("secondary-n", app::NewChat, None),
+            KeyBinding::new("secondary-,", app::OpenSettings, None),
+            KeyBinding::new("secondary-e", app::OpenExtensions, None),
+            KeyBinding::new("secondary-j", app::OpenSessions, None),
             // 文件浏览器键上下文（焦点在浏览器时优先于全局绑定）
-            KeyBinding::new("cmd-c", file_explorer::FsCopy, Some("FileExplorer")),
-            KeyBinding::new("cmd-x", file_explorer::FsCut, Some("FileExplorer")),
-            KeyBinding::new("cmd-v", file_explorer::FsPaste, Some("FileExplorer")),
+            KeyBinding::new("secondary-c", file_explorer::FsCopy, Some("FileExplorer")),
+            KeyBinding::new("secondary-x", file_explorer::FsCut, Some("FileExplorer")),
+            KeyBinding::new("secondary-v", file_explorer::FsPaste, Some("FileExplorer")),
             KeyBinding::new(
-                "cmd-backspace",
+                "secondary-backspace",
                 file_explorer::FsDelete,
                 Some("FileExplorer"),
             ),
             KeyBinding::new("up", file_explorer::FsSelUp, Some("FileExplorer")),
             KeyBinding::new("down", file_explorer::FsSelDown, Some("FileExplorer")),
             KeyBinding::new("right", file_explorer::FsToggleDir, Some("FileExplorer")),
-            KeyBinding::new("cmd-n", file_explorer::FsNewFile, Some("FileExplorer")),
-            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("secondary-n", file_explorer::FsNewFile, Some("FileExplorer")),
+            KeyBinding::new("secondary-q", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
 

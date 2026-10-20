@@ -93,6 +93,57 @@ pub fn render_dialog(app: &mut App, cx: &mut gpui::Context<App>) -> Option<AnyEl
         .map(|(label, input)| super::field(label, input.clone()))
         .collect();
     let kind2 = kind;
+    // Provider 表单独有：API 协议选择行（点 chip 直接改 dialog 状态）
+    let protocol_extra = match dialog {
+        Dialog::ProviderForm { protocol, .. } => {
+            use mcode_core::config::Protocol;
+            let selected = *protocol;
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(TEXT_2)
+                            .child(super::PROTOCOL_HINT),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(super::protocol_chip(
+                                "dlg-proto-responses",
+                                "Responses",
+                                selected == Protocol::Responses,
+                                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    if let Some(Dialog::ProviderForm { protocol, .. }) =
+                                        &mut this.dialog
+                                    {
+                                        *protocol = Protocol::Responses;
+                                    }
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(super::protocol_chip(
+                                "dlg-proto-chat",
+                                "Chat Completions（vLLM/DeepSeek 私有化等）",
+                                selected == Protocol::Chat,
+                                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                    if let Some(Dialog::ProviderForm { protocol, .. }) =
+                                        &mut this.dialog
+                                    {
+                                        *protocol = Protocol::Chat;
+                                    }
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
+            )
+        }
+        _ => None,
+    };
     Some(
         overlay(
             div()
@@ -101,6 +152,7 @@ pub fn render_dialog(app: &mut App, cx: &mut gpui::Context<App>) -> Option<AnyEl
                 .gap_3()
                 .child(div().text_size(px(15.)).child(title))
                 .children(field_list)
+                .children(protocol_extra)
                 .child(
                     div()
                         .flex()
