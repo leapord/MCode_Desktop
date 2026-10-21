@@ -450,6 +450,9 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         ))
     });
     let rows = app.fs_rows();
+    // “@即选中”联动：正文 @path 引用到的行加蓝色左侧标记（cwd 相对路径比对）
+    let mentioned = app.mentioned.clone();
+    let cwd = app.cwd.clone();
 
     // 工具条按钮（作用于选中项）
     let toolbar = {
@@ -517,6 +520,14 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
         let path = r.path.clone();
         let rc_path = path.clone();
         let sel = selected.as_ref() == Some(&path);
+        let is_mentioned = path
+            .strip_prefix(&cwd)
+            .ok()
+            .map(|rel| {
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                mentioned.iter().any(|m| *m == rel)
+            })
+            .unwrap_or(false);
         let depth_px = 8. + r.depth as f32 * 14.;
         div()
             .id(SharedString::from(format!("fs-{}", r.path.display())))
@@ -531,6 +542,7 @@ pub(crate) fn render_file_explorer(app: &mut App, cx: &mut Context<App>) -> gpui
             .text_size(px(11.5))
             .cursor_pointer()
             .when(sel, |d| d.bg(BG_ACTIVE))
+            .when(is_mentioned, |d| d.border_l_2().border_color(BLUE))
             .hover(|s| s.bg(BG_HOVER))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
                 let was_dir = path.is_dir();

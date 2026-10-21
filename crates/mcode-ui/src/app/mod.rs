@@ -144,6 +144,8 @@ pub struct App {
     pub sessions: Vec<SessionMeta>,
     pub session: Option<SessionStore>,
     pub file_tree: Vec<String>,
+    /// 正文中的 @path 引用（extract_refs 结果）：文件树按此高亮“@即选中”
+    pub(crate) mentioned: Vec<String>,
     pub cwd: PathBuf,
     pub goal: Option<String>,
     /// goal 外层循环已跑的轮数（/goal clear 时清零）
@@ -253,6 +255,7 @@ impl App {
             sessions: vec![],
             session: None,
             file_tree: crate::views::file_explorer::scan_file_tree(&cwd, false),
+            mentioned: vec![],
             cwd,
             goal: None,
             goal_rounds: 0,
@@ -390,7 +393,7 @@ impl App {
                 .unwrap_or(false);
             let r = expand_file_refs(&text, &self.cwd, multimodal);
             if !r.injected.is_empty() {
-                self.push_notice(format!("📎 已注入 {} 个文件引用", r.injected.len()), false);
+                self.push_notice(format!("📎 已注入 {} 个 @ 引用（文件内容/目录列表）", r.injected.len()), false);
             }
             if !r.missing.is_empty() {
                 self.push_notice(format!("⚠ 引用未解析：{}", r.missing.join("、")), true);
@@ -851,6 +854,8 @@ impl App {
 
     fn sync_completion(&mut self, text: &str) {
         self.completion.sync_from_input(text);
+        // @ 引用 ↔ 文件树联动：正文里的 @path 同步给文件树做“@即选中”高亮
+        self.mentioned = mcode_core::util::file_refs::extract_refs(text);
         if self.completion.is_open() {
             let q = self.completion.query.clone();
             self.candidates = match self.completion.trigger {
@@ -862,23 +867,56 @@ impl App {
                         is_dir: false,
                     })
                     .collect(),
-                Some(Trigger::At) => self
-                    .file_tree
-                    .iter()
-                    .filter(|f| f.to_lowercase().contains(&q.to_lowercase()))
-                    .take(12)
-                    .map(|f| Candidate {
-                        name: f.clone(),
-                        desc: String::new(),
-                        is_dir: f.ends_with('/'),
-                    })
-                    .collect(),
+                // 层级下钻（对齐 CLI）：按 query 末个 '/' 拆目录前缀，只列该目录
+                // 的立即子项并前缀过滤——不再对整棵树做扁平 substring 全表扫
+                Some(Trigger::At) => at_candidates_from_tree(&self.file_tree, &q),
                 None => vec![],
             };
         } else {
             self.candidates.clear();
         }
     }
+}
+
+/// @ 补全候选：层级下钻（对齐 CLI at_candidates 口径）。
+/// query 按末个 '/' 拆成目录前缀 + 过滤词，只列该目录的立即子项（树内目录
+/// 项带尾随 '/'），前缀匹配，最多 12 条。纯函数便于测试。
+pub(crate) fn at_candidates_from_tree(tree: &[String], query: &str) -> Vec<Candidate> {
+    let (dir_prefix, filter) = match query.rsplit_once('/') {
+        Some((d, f)) => (format!("{d}/"), f),
+        None => (String::new(), query),
+    };
+    let mut out: Vec<Candidate> = vec![];
+    for p in tree {
+        let Some(rest) = p.strip_prefix(dir_prefix.as_str()) else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        // 树内目录项形如 "src/"；文件项形如 "src/api/x.ts"。先按首个 '/'
+        // 切出立即子项名（嵌套路径归组到首段），再区分目录/文件
+        let (name, is_dir) = match rest.split_once('/') {
+            Some((first, _)) => (first, true),
+            None => (rest, false),
+        };
+        if !filter.is_empty() && !name.starts_with(filter) {
+            continue;
+        }
+        let full = format!("{dir_prefix}{name}");
+        if out.iter().any(|c| c.name == full) {
+            continue;
+        }
+        out.push(Candidate {
+            name: full,
+            desc: String::new(),
+            is_dir,
+        });
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out
 }
 
 impl Focusable for App {
