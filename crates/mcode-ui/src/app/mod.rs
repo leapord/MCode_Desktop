@@ -18,7 +18,7 @@ use gpui::{
 use mcode_core::agent::completion::{Candidate, CompletionState, InputHistory, Trigger};
 use mcode_core::agent::context::{MAX_GOAL_ROUNDS, build_goal_prompt};
 use mcode_core::agent::history::HistoryStore;
-use mcode_core::agent::runner::{MAX_TOOL_TURNS, TurnOpts, run_agent_turn};
+use mcode_core::agent::runner::{TurnOpts, run_agent_turn};
 use mcode_core::agent::{AgentEvent, Attachment, Message, Role};
 use mcode_core::config::Config;
 use mcode_core::permission::{Decision, Mode};
@@ -478,7 +478,7 @@ impl App {
                 &input,
                 TurnOpts {
                     instructions: None,
-                    max_turns: MAX_TOOL_TURNS,
+                    max_turns: 0, // 主会话不设轮次上限，死循环处理直到任务完成
                     goal,
                     tools_filter: None,
                     attachments,

@@ -7,7 +7,7 @@
 //! - 上翻暂停跟随的三个恢复路径（新建/清空/切换会话）都要把跟随重置回贴底
 
 use crate::views::text_input::{self as ti, TextInput};
-use gpui::{AppContext, EntityInputHandler, TestAppContext};
+use gpui::{EntityInputHandler, TestAppContext};
 
 fn make_input_window(cx: &mut TestAppContext) -> gpui::WindowHandle<TextInput> {
     cx.add_window(|_, cx| TextInput {
@@ -43,6 +43,14 @@ fn ime_composition_guards_backspace_and_submit(cx: &mut TestAppContext) {
             input.submit(&ti::Submit, window, cx);
             assert_eq!(input.text(), "已上屏ni", "组词期回车不得当发送清空");
 
+            // 外部整体重设内容（补全应用/历史召回）必须连带清组词态：
+            // 残留会让 gpui 后端按"组词中"把按键全导向 IME，输入框假死
+            input.set_text("重设", cx);
+            assert!(
+                input.marked_range.is_none(),
+                "set_text 后组词状态不得残留"
+            );
+
             // 上屏（unmark 后守卫解除）→ 重建已知状态，验证退格/回车恢复正常
             input.unmark_text(window, cx);
             assert!(input.marked_range.is_none(), "上屏后组词状态应清除");
@@ -58,7 +66,7 @@ fn ime_composition_guards_backspace_and_submit(cx: &mut TestAppContext) {
 /// 上翻暂停跟随的三个恢复路径（新建/清空/切换会话）都要把跟随重置回贴底。
 #[gpui::test]
 fn scroll_follow_resets_on_new_chat_clear_and_switch(cx: &mut TestAppContext) {
-    let mut c = crate::tests::interaction_tests::setup(cx, vec![]);
+    let c = crate::tests::interaction_tests::setup(cx, vec![]);
     c.app.update(cx, |a, cx| {
         // 1) 新建会话
         a.chat_follow = false;

@@ -155,6 +155,9 @@ impl TextInput {
     pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.content = text.to_string().into();
         self.selected_range = text.len()..text.len();
+        // 整体重设内容时组词态必已失效；残留会让 gpui 后端按"组词中"把按键
+        // 全部 translate_message 导向 IME（模型已收口），输入框表现为假死
+        self.marked_range = None;
         cx.emit(InputEvent::Changed(text.to_string()));
         cx.notify();
     }
