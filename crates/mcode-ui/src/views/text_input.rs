@@ -97,8 +97,20 @@ impl TextInput {
     /// IME 组词中（marked text 未上屏）。gpui 0.2 Windows 后端会把组词期按键
     /// （VK_PROCESSKEY）还原成原始键派发进应用，退格若不拦截会删掉已上屏内容
     /// 而不是让输入法纠正拼音；此时退格/删除/回车都应交给输入法。
+    /// 与 marked_text_range 同口径：越界/倒挂的残留 marked 视为组词态已废。
     fn is_composing(&self) -> bool {
-        self.marked_range.is_some()
+        self.valid_marked().is_some()
+    }
+
+    /// 残留组词态的统一有效性判定。gpui Windows 后端以 marked_text_range()
+    /// 是否为 Some 作为键盘闸门；一旦 entity 与真实 IME 脱钩留下失效 marked，
+    /// 后续按键会被 translate_message 全数导向已不存在的组词会话——方向键、
+    /// 空格在用户看来"没效果"。失效 marked 在此自动降级为 None（自愈解闸）。
+    fn valid_marked(&self) -> Option<Range<usize>> {
+        let marked = self.marked_range.as_ref()?;
+        let max = self.content.len();
+        (marked.start <= max && marked.end <= max && marked.start <= marked.end)
+            .then(|| marked.clone())
     }
 
     pub(crate) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -121,13 +133,16 @@ impl TextInput {
         self.replace_text_in_range(None, "", window, cx)
     }
 
-    fn on_mouse_down(
+    pub(crate) fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = true;
+        // 点击即结束组词：Windows IME 在鼠标点击后会自行取消组词，entity 侧
+        // 若仍挂 marked，键盘闸门会把后续按键导向已死的组词会话（假死）
+        self.marked_range = None;
 
         if event.modifiers.shift {
             self.select_to(self.index_for_mouse_position(event.position), cx);
@@ -348,9 +363,11 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        self.marked_range
-            .as_ref()
-            .map(|range| self.range_to_utf16(range))
+        // gpui Windows 后端的"组词中"闸门读本返回值：Some 则所有按键跳过
+        // binding 派发、translate_message 交给 IME。失效残留在此降级 None
+        // （键盘解闸自愈），口径与 is_composing 一致
+        self.valid_marked()
+            .map(|range| self.range_to_utf16(&range))
     }
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -367,14 +384,14 @@ impl EntityInputHandler for TextInput {
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
+            .or(self.valid_marked())
             .unwrap_or(self.selected_range.clone());
 
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
-        self.marked_range.take();
+        self.marked_range = None;
         // 键盘输入必经路径：同步补全状态机（/ 与 @ 触发）
         cx.emit(InputEvent::Changed(self.content.to_string()));
         cx.notify();
@@ -391,7 +408,7 @@ impl EntityInputHandler for TextInput {
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
+            .or(self.valid_marked())
             .unwrap_or(self.selected_range.clone());
 
         self.content =
@@ -402,10 +419,19 @@ impl EntityInputHandler for TextInput {
         } else {
             self.marked_range = None;
         }
+        // IME 给的选区相对新组词串，换算基准只加 range.start。此前误加 range.end
+        // （上游 gpui examples/input.rs 同款笔误）：MS 拼音每次组词更新都带显式
+        // 选区，旧 marked 非空时 selected_range 被推成越界且不塌缩的区间——
+        // prepaint 于是画高亮块而非光标条（"光标停在字中间"），还埋下切片越界隐患
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
+            .map(|new_range| {
+                let max = self.content.len();
+                let start = (new_range.start + range.start).min(max);
+                let end = (new_range.end + range.start).min(max).max(start);
+                start..end
+            })
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
         // 键盘输入必经路径：同步补全状态机（/ 与 @ 触发）

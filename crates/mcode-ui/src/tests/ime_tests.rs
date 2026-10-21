@@ -63,6 +63,74 @@ fn ime_composition_guards_backspace_and_submit(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+/// MS 拼音逐次组词更新（每次带相对组词串的显式 caret 选区）下，selected_range
+/// 必须塌缩在组词尾部且不越界：越界非塌缩区间会让 prepaint 走高亮分支画方块
+/// 而非光标条（"光标停在字中间"），还埋下切片越界隐患。
+#[gpui::test]
+fn ime_composition_updates_keep_selection_collapsed(cx: &mut TestAppContext) {
+    let window = make_input_window(cx);
+    window
+        .update(cx, |input, window, cx| {
+            input.set_text("已上屏", cx); // utf8 len 9
+
+            // 组词第 1 帧："n"，IME 给 caret = 组词串内 utf16 1..1
+            input.replace_and_mark_text_in_range(None, "n", Some(1..1), window, cx);
+            assert_eq!(input.text(), "已上屏n");
+            assert_eq!(input.selected_range, 10..10);
+
+            // 组词第 2 帧：替换旧 marked（utf16 3..4）为 "ni"，caret 2..2。
+            // 修复前：选区换算误加 range.end → selected 被推成 11..12（越界且不塌缩）
+            input.replace_and_mark_text_in_range(Some(3..4), "ni", Some(2..2), window, cx);
+            assert_eq!(input.text(), "已上屏ni");
+            assert_eq!(input.selected_range, 11..11, "组词选区应塌缩在组词尾部");
+            assert_eq!(input.marked_range, Some(9..11), "marked 应落在新组词串上");
+            assert_eq!(
+                input.marked_text_range(window, cx),
+                Some(3..5),
+                "键盘闸门读到的 utf16 组词区间应有效"
+            );
+        })
+        .unwrap();
+}
+
+/// 残留失效 marked（entity 与真实 IME 脱钩）必须自动降级解闸：gpui Windows
+/// 后端以 marked_text_range() 作"组词中"键盘闸门，废组词态不解闸会把方向键/
+/// 空格全数导向已不存在的组词会话（表现为按键没效果）。点击输入框同理要清。
+#[gpui::test]
+fn ime_stale_marked_gate_self_heals(cx: &mut TestAppContext) {
+    let window = make_input_window(cx);
+    window
+        .update(cx, |input, window, cx| {
+            input.set_text("abc", cx);
+            // 模拟脱钩残留：越界 marked
+            input.marked_range = Some(99..102);
+            assert_eq!(
+                input.marked_text_range(window, cx),
+                None,
+                "越界残留不得再当组词态（闸门应解）"
+            );
+            input.backspace(&ti::Backspace, window, cx);
+            assert_eq!(input.text(), "ab", "解闸后退格应恢复正常删除");
+
+            // 点击输入框即结束组词：entity 侧同步清 marked，防闸门滞留
+            input.replace_and_mark_text_in_range(None, "de", None, window, cx);
+            assert!(input.marked_range.is_some(), "前置：组词态应已挂上");
+            input.on_mouse_down(
+                &gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position: gpui::point(gpui::px(0.), gpui::px(0.)),
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: true,
+                },
+                window,
+                cx,
+            );
+            assert!(input.marked_range.is_none(), "点击后组词态应清除");
+        })
+        .unwrap();
+}
+
 /// 上翻暂停跟随的三个恢复路径（新建/清空/切换会话）都要把跟随重置回贴底。
 #[gpui::test]
 fn scroll_follow_resets_on_new_chat_clear_and_switch(cx: &mut TestAppContext) {
